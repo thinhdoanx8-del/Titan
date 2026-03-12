@@ -1,6 +1,11 @@
 -- ============================================
 --   Titan Fishing - Auto Farm Script
 --   UI: Fluent Library | Executor: Delta X
+--   Canh Perfect dựa trên GUI chính xác:
+--   - Frame "Bar" parent: CanvasGroup (thanh timing)
+--   - Frame "Top" parent: Main (vùng Perfect - xanh lá)
+--   - Frame "Down" parent: Main (vùng Miss - đỏ)
+--   - TextButton "FishingButton" parent: RodGUI
 -- ============================================
 
 local Fluent = loadstring(game:HttpGet(
@@ -38,134 +43,188 @@ local Tabs = {
 local Players     = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local autoFarmOn  = false
-local castWait    = 1.2
-local reelWait    = 1.5
+
+-- Remote được lưu khi hook
+_G.TF_Remote1 = nil  -- Remote lần bấm 1 (vào canh luck)
+_G.TF_Remote2 = nil  -- Remote lần bấm 2 (thả cần)
+_G.TF_Args1   = {}
+_G.TF_Args2   = {}
+_G.TF_Hooked  = false
 
 -- ============================================
--- HÀM BẤM NÚT FISHING - ĐÃ SỬA
--- TextButton "FishingButton" parent: RodGUI
--- Text: "Fishing"
+-- HOOK REMOTE KHI LẦN ĐẦU CHẠY
+-- Yêu cầu người dùng bấm tay 2 lần để lưu remote
 -- ============================================
-local function clickFishing()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return false end
+local function hookRemotes()
+    if _G.TF_Hooked then return end
+    _G.TF_Hooked = true
+    _G.TF_Count = 0
 
-    for _, obj in ipairs(playerGui:GetDescendants()) do
-        if obj:IsA("TextButton") 
-           and obj.Name == "FishingButton" 
-           and obj.Parent 
-           and obj.Parent.Name == "RodGUI" then
-
-            -- Thử nhiều cách fire để đảm bảo hoạt động trên mobile
-            pcall(function() obj.MouseButton1Down:Fire() end)
-            task.wait(0.05)
-            pcall(function() obj.MouseButton1Up:Fire() end)
-            pcall(function() obj.MouseButton1Click:Fire() end)
-            pcall(function() obj.Activated:Fire() end)
-
-            -- Cách mạnh nhất: dùng firetouchinterest
-            pcall(function()
-                firetouchinterest(obj, LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"), 0)
-                task.wait(0.1)
-                firetouchinterest(obj, LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"), 1)
-            end)
-
-            -- Dùng firebutton nếu executor hỗ trợ
-            pcall(function() firebutton(obj) end)
-
-            return true
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        if method == "FireServer" and _G.TF_Count < 2 then
+            _G.TF_Count = _G.TF_Count + 1
+            if _G.TF_Count == 1 then
+                _G.TF_Remote1 = self
+                _G.TF_Args1 = {...}
+            elseif _G.TF_Count == 2 then
+                _G.TF_Remote2 = self
+                _G.TF_Args2 = {...}
+                -- Đã bắt xong cả 2
+                Fluent:Notify({
+                    Title = "✅ Sẵn sàng!",
+                    Content = "Đã học xong cách câu! Bật Auto Farm thôi.",
+                    Duration = 4
+                })
+            end
         end
+        return oldNamecall(self, ...)
+    end)
+end
+
+-- ============================================
+-- HÀM BẤM FISHING (gọi remote trực tiếp)
+-- ============================================
+local function fireRemote1()
+    if _G.TF_Remote1 then
+        pcall(function()
+            _G.TF_Remote1:FireServer(table.unpack(_G.TF_Args1 or {}))
+        end)
+        return true
+    end
+    return false
+end
+
+local function fireRemote2()
+    if _G.TF_Remote2 then
+        pcall(function()
+            _G.TF_Remote2:FireServer(table.unpack(_G.TF_Args2 or {}))
+        end)
+        return true
     end
     return false
 end
 
 -- ============================================
--- HÀM CANH PERFECT
--- Frame "Indicator" parent: Active  → con trỏ
--- Frame "Indicator" parent: Inactive → vùng perfect
+-- HÀM TÌM VÙNG PERFECT CHÍNH XÁC
+-- Frame "Top" parent: Main (màu xanh lá RGB 0,255,127)
+-- Frame "Bar" parent: CanvasGroup (thanh di chuyển)
 -- ============================================
-local function waitForSlider()
-    local timeout = 6
-    local elapsed = 0
-    while elapsed < timeout do
-        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-        if playerGui then
-            for _, obj in ipairs(playerGui:GetDescendants()) do
-                if obj:IsA("Frame") and obj.Name == "Bar"
-                   and obj.Parent and obj.Parent.Name == "Slider" then
-                    return obj.Parent
-                end
+local function getTimingFrames()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return nil, nil end
+
+    local bar      = nil  -- Frame "Bar" trong CanvasGroup (con trỏ di chuyển)
+    local perfect  = nil  -- Frame "Top" trong Main (vùng Perfect xanh lá)
+
+    for _, obj in ipairs(playerGui:GetDescendants()) do
+        -- Thanh di chuyển: Frame tên "Bar" parent tên "CanvasGroup"
+        if obj:IsA("Frame") and obj.Name == "Bar"
+           and obj.Parent and obj.Parent.Name == "CanvasGroup" then
+            bar = obj
+        end
+        -- Vùng Perfect: Frame tên "Top" parent tên "Main"
+        -- Màu RGB(0,255,127) - xanh lá
+        if obj:IsA("Frame") and obj.Name == "Top"
+           and obj.Parent and obj.Parent.Name == "Main" then
+            -- Kiểm tra màu xanh lá để chắc đúng vùng Perfect
+            local c = obj.BackgroundColor3
+            if c.R < 0.1 and c.G > 0.9 and c.B > 0.4 then
+                perfect = obj
             end
         end
-        task.wait(0.1)
-        elapsed = elapsed + 0.1
     end
-    return nil
+
+    return bar, perfect
 end
 
-local function hitPerfect()
-    local slider = waitForSlider()
-    if not slider then
-        task.wait(0.6)
-        clickFishing()
-        return
-    end
-
-    -- Tìm con trỏ và vùng perfect
-    local indicator = nil
-    local zones = {}
-
-    for _, obj in ipairs(slider:GetDescendants()) do
-        if obj:IsA("Frame") and obj.Name == "Indicator" then
-            if obj.Parent and obj.Parent.Name == "Active" then
-                indicator = obj
-            elseif obj.Parent and obj.Parent.Name == "Inactive" then
-                table.insert(zones, obj)
-            end
-        end
-    end
-
-    if not indicator or #zones == 0 then
-        task.wait(0.5)
-        clickFishing()
-        return
-    end
-
-    -- Canh đúng vùng Perfect (check 60fps)
-    local maxWait = 8
+-- ============================================
+-- HÀM CHỜ MINI GAME XUẤT HIỆN
+-- ============================================
+local function waitForMiniGame(timeout)
+    timeout = timeout or 6
     local elapsed = 0
-    while autoFarmOn and elapsed < maxWait do
-        local indCenter = indicator.AbsolutePosition.X + indicator.AbsoluteSize.X / 2
+    while elapsed < timeout do
+        local bar, perfect = getTimingFrames()
+        if bar and perfect and bar.Visible and perfect.Visible then
+            return bar, perfect
+        end
+        task.wait(0.05)
+        elapsed = elapsed + 0.05
+    end
+    return nil, nil
+end
 
-        for _, zone in ipairs(zones) do
-            local zLeft  = zone.AbsolutePosition.X
-            local zRight = zLeft + zone.AbsoluteSize.X
-            if indCenter >= zLeft and indCenter <= zRight then
-                clickFishing()
-                return
-            end
+-- ============================================
+-- HÀM CANH PERFECT CHÍNH XÁC
+-- Bar di chuyển, khi Bar chồng lên vùng Perfect thì bấm
+-- ============================================
+local function hitPerfect()
+    local bar, perfect = waitForMiniGame(6)
+
+    if not bar or not perfect then
+        -- Không tìm thấy mini game UI → bấm sau delay cố định
+        task.wait(0.8)
+        fireRemote2()
+        return
+    end
+
+    -- Canh Bar vào vùng Perfect (check 60fps)
+    local maxWait = 10
+    local elapsed = 0
+
+    while autoFarmOn and elapsed < maxWait do
+        -- Kiểm tra bar còn visible không (mini game còn đang chạy)
+        if not bar.Visible or not perfect.Visible then
+            break
         end
 
-        task.wait(0.016)
+        local barCenter = bar.AbsolutePosition.X + bar.AbsoluteSize.X / 2
+        local perfLeft  = perfect.AbsolutePosition.X
+        local perfRight = perfLeft + perfect.AbsoluteSize.X
+
+        -- Nếu bar đang trong vùng Perfect → bấm ngay!
+        if barCenter >= perfLeft and barCenter <= perfRight then
+            fireRemote2()
+            return
+        end
+
+        task.wait(0.016) -- 60fps
         elapsed = elapsed + 0.016
     end
 
-    -- Fallback nếu hết thời gian
-    clickFishing()
+    -- Fallback: bấm luôn
+    fireRemote2()
 end
 
 -- ============================================
--- VÒNG LẶP CHÍNH
+-- VÒNG LẶP AUTO FARM
 -- ============================================
+local castWait = 0.8
+local reelWait = 2.0
+
 local function runAutoFarm()
     while autoFarmOn do
-        local ok = clickFishing()
-
-        if not ok then
-            task.wait(1)
+        -- Kiểm tra đã có remote chưa
+        if not _G.TF_Remote1 or not _G.TF_Remote2 then
+            Fluent:Notify({
+                Title = "⚠️ Chưa học remote!",
+                Content = "Hãy bấm tay nút Fishing 2 lần trước.",
+                Duration = 4
+            })
+            task.wait(3)
         else
+            -- Bước 1: Bấm Fishing lần 1 (vào trạng thái canh luck)
+            fireRemote1()
+
+            -- Bước 2: Chờ mini-game timing xuất hiện
             task.wait(castWait)
+
+            -- Bước 3: Canh đúng vùng Perfect rồi bấm lần 2
             hitPerfect()
+
+            -- Bước 4: Chờ animation xong
             task.wait(reelWait)
         end
     end
@@ -176,16 +235,24 @@ end
 -- ============================================
 Tabs.AutoFarm:AddToggle("EnableAutoFarm", {
     Title = "Enable Auto Farm",
-    Description = "Tự động nhấn FishingButton và canh Perfect",
+    Description = "Tự động câu cá và canh Perfect (x2 Luck)",
     Default = false,
     Callback = function(state)
         autoFarmOn = state
         if state then
-            Fluent:Notify({
-                Title = "Auto Farm",
-                Content = "Đã bật! Đang câu cá & canh Perfect...",
-                Duration = 3
-            })
+            if not _G.TF_Remote1 or not _G.TF_Remote2 then
+                Fluent:Notify({
+                    Title = "⚠️ Cần học remote trước!",
+                    Content = "Bấm tay nút Fishing 2 lần để script học cách câu.",
+                    Duration = 5
+                })
+            else
+                Fluent:Notify({
+                    Title = "🎣 Auto Farm",
+                    Content = "Đã bật! Đang câu cá & canh Perfect x2 Luck...",
+                    Duration = 3
+                })
+            end
             task.spawn(runAutoFarm)
         else
             Fluent:Notify({
@@ -203,9 +270,9 @@ Tabs.AutoFarm:AddToggle("EnableAutoFarm", {
 Tabs.Settings:AddSlider("CastWait", {
     Title = "⏱️ Chờ sau khi Cast (giây)",
     Description = "Thời gian chờ trước khi mini-game xuất hiện",
-    Default = 1.2,
-    Min = 0.5,
-    Max = 5,
+    Default = 0.8,
+    Min = 0.3,
+    Max = 3,
     Rounding = 1,
     Callback = function(v) castWait = v end
 })
@@ -213,11 +280,30 @@ Tabs.Settings:AddSlider("CastWait", {
 Tabs.Settings:AddSlider("ReelWait", {
     Title = "🔄 Chờ sau khi Reel (giây)",
     Description = "Thời gian chờ trước vòng câu tiếp theo",
-    Default = 1.5,
+    Default = 2.0,
     Min = 0.5,
     Max = 6,
     Rounding = 1,
     Callback = function(v) reelWait = v end
+})
+
+Tabs.Settings:AddButton({
+    Title = "🔁 Reset Remote (học lại)",
+    Description = "Bấm nếu muốn học lại remote từ đầu",
+    Callback = function()
+        _G.TF_Remote1 = nil
+        _G.TF_Remote2 = nil
+        _G.TF_Args1   = {}
+        _G.TF_Args2   = {}
+        _G.TF_Count   = 0
+        _G.TF_Hooked  = false
+        hookRemotes()
+        Fluent:Notify({
+            Title = "Reset",
+            Content = "Đã reset! Bấm tay Fishing 2 lần để học lại.",
+            Duration = 4
+        })
+    end
 })
 
 SaveManager:SetLibrary(Fluent)
@@ -233,13 +319,18 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 -- TAB INFO
 -- ============================================
 Tabs.Info:AddParagraph({
-    Title = "📖 Hướng dẫn",
-    Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật toggle 'Enable Auto Farm'\n4. Script tự bấm FishingButton và canh Perfect"
+    Title = "📖 Hướng dẫn lần đầu",
+    Content = "1. Chạy script\n2. Bấm tay nút Fishing LẦN 1 (vào canh luck)\n3. Bấm tay nút Fishing LẦN 2 (thả cần)\n4. Thấy thông báo 'Sẵn sàng' → Bật toggle Auto Farm"
+})
+
+Tabs.Info:AddParagraph({
+    Title = "⚙️ Cách hoạt động",
+    Content = "Script học remote từ 2 lần bấm tay của bạn, sau đó tự động gọi remote đó liên tục. Vùng Perfect được detect qua Frame 'Top' màu xanh lá (RGB 0,255,127)."
 })
 
 Tabs.Info:AddParagraph({
     Title = "⚠️ Lưu ý",
-    Content = "Nếu bị trễ, vào Settings tăng 'Chờ sau khi Cast' lên 1-2 giây."
+    Content = "Nếu cần học lại remote (sau khi respawn hoặc đổi rod), vào Settings → bấm 'Reset Remote' rồi bấm tay 2 lần lại."
 })
 
 -- ============================================
@@ -247,19 +338,28 @@ Tabs.Info:AddParagraph({
 -- ============================================
 Window:SelectTab(1)
 
+-- Bắt đầu hook ngay khi load
+hookRemotes()
+
 Fluent:Notify({
     Title = "🎣 Titan Fishing Auto Farm",
-    Content = "Đã tải thành công! Bật toggle để bắt đầu.",
-    Duration = 5
+    Content = "Đã tải! Hãy bấm tay nút Fishing 2 lần để học remote.",
+    Duration = 6
 })
 
+-- Reset khi respawn
 LocalPlayer.CharacterAdded:Connect(function()
-    if autoFarmOn then
-        autoFarmOn = false
-        Fluent:Notify({
-            Title = "Respawn",
-            Content = "Nhân vật đã respawn, hãy bật lại Auto Farm.",
-            Duration = 4
-        })
-    end
+    autoFarmOn = false
+    _G.TF_Remote1 = nil
+    _G.TF_Remote2 = nil
+    _G.TF_Args1   = {}
+    _G.TF_Args2   = {}
+    _G.TF_Count   = 0
+    _G.TF_Hooked  = false
+    hookRemotes()
+    Fluent:Notify({
+        Title = "Respawn",
+        Content = "Đã respawn! Bấm tay Fishing 2 lần để học lại remote.",
+        Duration = 5
+    })
 end)
