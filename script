@@ -1,8 +1,11 @@
 -- ============================================
 --   Titan Fishing - Auto Farm Script
 --   UI: Fluent Library | Executor: Delta X
---   - Tự động nhấn nút "Fishing"
---   - Tự động canh Perfect / Lucky timing
+--   Tên GUI chính xác từ debug scan:
+--   - TextButton "FishingButton" parent: RodGUI
+--   - Frame "Bar" parent: Slider (thanh timing)
+--   - Frame "Indicator" parent: Active (con trỏ)
+--   - Frame "Indicator" parent: Inactive (vùng chờ)
 -- ============================================
 
 local Fluent = loadstring(game:HttpGet(
@@ -40,24 +43,26 @@ local Tabs = {
 local Players     = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 local autoFarmOn  = false
+local castWait    = 1.2  -- chờ sau khi bấm FishingButton
+local reelWait    = 1.5  -- chờ sau khi canh perfect xong
 
 -- ============================================
--- HÀM TÌM NÚT "Fishing" TRONG PLAYERGUI
+-- HÀM TÌM NÚT FISHING CHÍNH XÁC
+-- TextButton tên "FishingButton" trong RodGUI
 -- ============================================
 local function getFishingButton()
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
     if not playerGui then return nil end
 
     for _, obj in ipairs(playerGui:GetDescendants()) do
-        if (obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("TextLabel")) then
-            -- Tìm đúng nút có text "Fishing"
-            local txt = ""
-            if obj:IsA("TextButton") or obj:IsA("TextLabel") then
-                txt = obj.Text or ""
-            end
-            if txt == "Fishing" or obj.Name == "Fishing" or obj.Name:lower():find("fishing") then
-                return obj
-            end
+        if obj:IsA("TextButton") and obj.Name == "FishingButton" then
+            return obj
+        end
+    end
+    -- Fallback: ImageButton tên "Fish" trong Buttons
+    for _, obj in ipairs(playerGui:GetDescendants()) do
+        if obj:IsA("ImageButton") and obj.Name == "Fish" then
+            return obj
         end
     end
     return nil
@@ -69,88 +74,121 @@ end
 local function clickFishing()
     local btn = getFishingButton()
     if btn then
-        -- Ưu tiên FireServer nếu có connection
-        local ok = pcall(function()
-            if btn:IsA("TextButton") or btn:IsA("ImageButton") then
-                btn.MouseButton1Down:Fire()
-                task.wait(0.05)
-                btn.MouseButton1Up:Fire()
-                btn.MouseButton1Click:Fire()
-            end
+        pcall(function()
+            btn.MouseButton1Down:Fire()
+            task.wait(0.05)
+            btn.MouseButton1Up:Fire()
+            btn.MouseButton1Click:Fire()
         end)
-        return ok
+        return true
     end
     return false
 end
 
 -- ============================================
--- HÀM CANH PERFECT / LUCKY
--- Tìm thanh progress / indicator trong GUI
--- và bấm đúng lúc vào vùng Perfect
+-- HÀM CANH PERFECT CHÍNH XÁC
+-- Thanh timing: Frame "Bar" parent: Slider
+-- Con trỏ:      Frame "Indicator" parent: Active
+-- Vùng perfect: Frame "Indicator" parent: Inactive
+--   (Inactive chứa các vùng zone, Active chứa con trỏ)
 -- ============================================
-local function watchAndHitPerfect()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return end
-
-    -- Tìm frame chứa mini-game timing (thanh kéo cần)
-    local timingFrame = nil
-    local indicator   = nil  -- khối/mũi tên di chuyển
-    local perfectZone = nil  -- vùng màu xanh/vàng "Perfect"
-
-    -- Tìm theo tên phổ biến
-    local frameNames   = {"FishingUI","FishUI","CatchUI","ReelUI","MiniGame","TimingBar","FishBar"}
-    local indicNames   = {"Indicator","Arrow","Pointer","Ball","Slider","Moving","Needle"}
-    local perfectNames = {"Perfect","Lucky","Green","Zone","Target","GoodZone","PerfectZone"}
-
-    for _, obj in ipairs(playerGui:GetDescendants()) do
-        local n = obj.Name
-        for _, fn in ipairs(frameNames) do
-            if n:lower():find(fn:lower()) and obj:IsA("Frame") then
-                timingFrame = obj
+local function waitForTimingUI()
+    -- Chờ tối đa 5 giây để mini-game xuất hiện
+    local timeout = 5
+    local elapsed = 0
+    while elapsed < timeout do
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if playerGui then
+            for _, obj in ipairs(playerGui:GetDescendants()) do
+                -- Tìm Frame "Bar" trong "Slider" (thanh timing chính)
+                if obj:IsA("Frame") and obj.Name == "Bar" 
+                   and obj.Parent and obj.Parent.Name == "Slider" then
+                    return obj.Parent -- trả về Slider
+                end
             end
         end
-        for _, ind in ipairs(indicNames) do
-            if n:lower():find(ind:lower()) and (obj:IsA("Frame") or obj:IsA("ImageLabel")) then
+        task.wait(0.1)
+        elapsed = elapsed + 0.1
+    end
+    return nil
+end
+
+local function getIndicatorAndZones(slider)
+    local indicator  = nil  -- Frame "Indicator" parent: Active
+    local activeZones = {}  -- Frame "Indicator" parent: Inactive (vùng perfect)
+
+    for _, obj in ipairs(slider:GetDescendants()) do
+        if obj:IsA("Frame") and obj.Name == "Indicator" then
+            if obj.Parent and obj.Parent.Name == "Active" then
                 indicator = obj
-            end
-        end
-        for _, pn in ipairs(perfectNames) do
-            if n:lower():find(pn:lower()) and (obj:IsA("Frame") or obj:IsA("ImageLabel")) then
-                perfectZone = obj
+            elseif obj.Parent and obj.Parent.Name == "Inactive" then
+                table.insert(activeZones, obj)
             end
         end
     end
 
-    -- Nếu tìm thấy indicator và perfectZone thì canh bấm
-    if indicator and perfectZone then
-        local maxWait = 10
+    -- Nếu không tìm được qua parent, lấy tất cả Indicator
+    if not indicator then
+        for _, obj in ipairs(slider:GetDescendants()) do
+            if obj:IsA("Frame") and obj.Name == "Indicator" then
+                indicator = obj
+                break
+            end
+        end
+    end
+
+    return indicator, activeZones
+end
+
+local function hitPerfect()
+    local slider = waitForTimingUI()
+    if not slider then
+        -- Không tìm thấy timing UI, bấm fallback
+        task.wait(0.6)
+        clickFishing()
+        return
+    end
+
+    local indicator, zones = getIndicatorAndZones(slider)
+
+    if not indicator then
+        task.wait(0.6)
+        clickFishing()
+        return
+    end
+
+    -- Nếu có zones (vùng perfect/lucky), canh đúng vùng
+    if #zones > 0 then
+        local maxWait = 8
         local elapsed = 0
+
         while autoFarmOn and elapsed < maxWait do
-            -- Lấy vị trí tuyệt đối
-            local indPos  = indicator.AbsolutePosition
-            local indSize = indicator.AbsoluteSize
-            local perPos  = perfectZone.AbsolutePosition
-            local perSize = perfectZone.AbsoluteSize
+            local indPos    = indicator.AbsolutePosition
+            local indSize   = indicator.AbsoluteSize
+            local indCenter = indPos.X + indSize.X / 2
 
-            local indCenter  = indPos.X + indSize.X / 2
-            local perLeft    = perPos.X
-            local perRight   = perPos.X + perSize.X
+            for _, zone in ipairs(zones) do
+                local zPos   = zone.AbsolutePosition
+                local zSize  = zone.AbsoluteSize
+                local zLeft  = zPos.X
+                local zRight = zPos.X + zSize.X
 
-            -- Nếu indicator đang trong vùng Perfect → bấm
-            if indCenter >= perLeft and indCenter <= perRight then
-                clickFishing()
-                return
+                if indCenter >= zLeft and indCenter <= zRight then
+                    -- Indicator đang trong vùng Perfect/Lucky!
+                    clickFishing()
+                    return
+                end
             end
 
-            task.wait(0.02) -- check mỗi 20ms để không bỏ lỡ
-            elapsed = elapsed + 0.02
+            task.wait(0.016) -- check 60fps
+            elapsed = elapsed + 0.016
         end
 
-        -- Fallback: bấm sau khoảng thời gian trung bình nếu không detect được
+        -- Hết thời gian → bấm luôn
         clickFishing()
     else
-        -- Không tìm thấy UI timing → bấm theo delay cố định
-        task.wait(0.6)
+        -- Không có zone → bấm giữa thanh
+        task.wait(0.5)
         clickFishing()
     end
 end
@@ -160,21 +198,20 @@ end
 -- ============================================
 local function runAutoFarm()
     while autoFarmOn do
-        -- Bước 1: Bấm nút Fishing để cast
-        local success = clickFishing()
+        -- Bước 1: Bấm FishingButton
+        local ok = clickFishing()
 
-        if not success then
-            -- Nút chưa xuất hiện, chờ rồi thử lại
+        if not ok then
             task.wait(1)
         else
             -- Bước 2: Chờ mini-game timing xuất hiện
-            task.wait(1.5)
+            task.wait(castWait)
 
             -- Bước 3: Canh Perfect và bấm
-            watchAndHitPerfect()
+            hitPerfect()
 
-            -- Bước 4: Chờ animation kết thúc rồi lặp lại
-            task.wait(2)
+            -- Bước 4: Chờ animation xong rồi lặp
+            task.wait(reelWait)
         end
     end
 end
@@ -184,7 +221,7 @@ end
 -- ============================================
 Tabs.AutoFarm:AddToggle("EnableAutoFarm", {
     Title = "Enable Auto Farm",
-    Description = "Tự động nhấn nút Fishing và canh Perfect",
+    Description = "Tự động nhấn FishingButton và canh Perfect",
     Default = false,
     Callback = function(state)
         autoFarmOn = state
@@ -208,13 +245,10 @@ Tabs.AutoFarm:AddToggle("EnableAutoFarm", {
 -- ============================================
 -- TAB SETTINGS
 -- ============================================
-local castWait = 1.5
-local reelWait = 2.0
-
 Tabs.Settings:AddSlider("CastWait", {
     Title = "⏱️ Chờ sau khi Cast (giây)",
     Description = "Thời gian chờ trước khi mini-game xuất hiện",
-    Default = 1.5,
+    Default = 1.2,
     Min = 0.5,
     Max = 5,
     Rounding = 1,
@@ -224,7 +258,7 @@ Tabs.Settings:AddSlider("CastWait", {
 Tabs.Settings:AddSlider("ReelWait", {
     Title = "🔄 Chờ sau khi Reel (giây)",
     Description = "Thời gian chờ trước vòng câu tiếp theo",
-    Default = 2.0,
+    Default = 1.5,
     Min = 0.5,
     Max = 6,
     Rounding = 1,
@@ -245,12 +279,17 @@ InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 -- ============================================
 Tabs.Info:AddParagraph({
     Title = "📖 Hướng dẫn",
-    Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu\n3. Bật toggle 'Enable Auto Farm'\n4. Script tự bấm nút Fishing và canh Perfect"
+    Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật toggle 'Enable Auto Farm'\n4. Script tự bấm FishingButton và canh Perfect"
+})
+
+Tabs.Info:AddParagraph({
+    Title = "⚙️ Cách hoạt động",
+    Content = "Script tìm đúng nút 'FishingButton' trong RodGUI, sau đó theo dõi Frame 'Indicator' trong 'Active' và canh đúng vùng 'Indicator' trong 'Inactive' để bấm Perfect."
 })
 
 Tabs.Info:AddParagraph({
     Title = "⚠️ Lưu ý",
-    Content = "Nếu không canh được Perfect, vào Settings tăng 'Chờ sau khi Cast' lên để script có thêm thời gian nhận diện UI timing."
+    Content = "Nếu bị trễ, vào Settings tăng 'Chờ sau khi Cast' lên 1-2 giây."
 })
 
 -- ============================================
