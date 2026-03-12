@@ -77,7 +77,7 @@ local function getFishingBtnPos()
         end
     end
 
-    return 316, 595 -- fallback
+    return 694, 277 -- fallback
 end
 
 -- ============================================
