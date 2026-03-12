@@ -1,8 +1,10 @@
 -- ============================================
 --   Titan Fishing - Auto Farm Script
 --   UI: Fluent Library | Executor: Delta X
+--   - Tự động nhấn nút "Fishing"
+--   - Tự động canh Perfect / Lucky timing
 -- ============================================
- 
+
 local Fluent = loadstring(game:HttpGet(
     "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"
 ))()
@@ -12,9 +14,9 @@ local SaveManager = loadstring(game:HttpGet(
 local InterfaceManager = loadstring(game:HttpGet(
     "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"
 ))()
- 
+
 -- ============================================
--- WINDOW CHÍNH
+-- WINDOW
 -- ============================================
 local Window = Fluent:CreateWindow({
     Title = "Titan Fishing",
@@ -25,263 +27,175 @@ local Window = Fluent:CreateWindow({
     Theme = "Dark",
     MinimizeKey = Enum.KeyCode.LeftControl
 })
- 
--- ============================================
--- TABS
--- ============================================
+
 local Tabs = {
     AutoFarm = Window:AddTab({ Title = "Auto Farm", Icon = "fish" }),
     Settings  = Window:AddTab({ Title = "Settings",  Icon = "settings" }),
     Info      = Window:AddTab({ Title = "Info",       Icon = "info" }),
 }
- 
+
 -- ============================================
--- BIẾN TOÀN CỤC
+-- BIẾN
 -- ============================================
-local Players       = game:GetService("Players")
-local LocalPlayer   = Players.LocalPlayer
-local autoFarmOn    = false
-local farmThread    = nil
-local totalCaught   = 0
-local castDelay     = 1.5   -- giây chờ sau khi cast
-local reelDelay     = 0.5   -- giây chờ trước khi reel
-local waitBite      = 12    -- giây chờ cá cắn tối đa
- 
+local Players     = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local autoFarmOn  = false
+
 -- ============================================
--- HÀM TÌM REMOTE / BINDABLE CÂU CÁ
+-- HÀM TÌM NÚT "Fishing" TRONG PLAYERGUI
 -- ============================================
-local function findFishingRemote()
-    -- Tìm trong ReplicatedStorage
-    local RS = game:GetService("ReplicatedStorage")
-    local candidates = {
-        "FishingEvent", "Fish", "CastRod", "StartFishing",
-        "FishingRemote", "Fishing", "CastFishing", "DoFishing"
-    }
-    for _, name in ipairs(candidates) do
-        local r = RS:FindFirstChild(name, true)
-        if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
-            return r
+local function getFishingButton()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return nil end
+
+    for _, obj in ipairs(playerGui:GetDescendants()) do
+        if (obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("TextLabel")) then
+            -- Tìm đúng nút có text "Fishing"
+            local txt = ""
+            if obj:IsA("TextButton") or obj:IsA("TextLabel") then
+                txt = obj.Text or ""
+            end
+            if txt == "Fishing" or obj.Name == "Fishing" or obj.Name:lower():find("fishing") then
+                return obj
+            end
         end
     end
     return nil
 end
- 
-local function findReelRemote()
-    local RS = game:GetService("ReplicatedStorage")
-    local candidates = {
-        "ReelIn", "Reel", "CatchFish", "EndFishing",
-        "StopFishing", "ReelFishing", "CatchEvent"
-    }
-    for _, name in ipairs(candidates) do
-        local r = RS:FindFirstChild(name, true)
-        if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
-            return r
-        end
-    end
-    return nil
-end
- 
+
 -- ============================================
--- HÀM MÔ PHỎNG BẤM NÚT "FISHING" TRONG GAME
+-- HÀM BẤM NÚT FISHING
 -- ============================================
-local function clickFishingButton()
-    -- Tìm ScreenGui chứa nút Fishing
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return false end
- 
-    -- Duyệt tất cả GUI tìm nút có tên liên quan đến Fishing
-    local buttonNames = {
-        "Fishing", "FishButton", "CastButton", "Fish",
-        "StartFish", "BtnFishing", "FishingBtn", "Cast"
-    }
- 
-    for _, gui in ipairs(playerGui:GetDescendants()) do
-        if gui:IsA("TextButton") or gui:IsA("ImageButton") then
-            for _, bname in ipairs(buttonNames) do
-                if gui.Name:lower():find(bname:lower()) then
-                    -- Kích hoạt nút
-                    local ok, err = pcall(function()
-                        gui.MouseButton1Click:Fire()
-                        -- Hoặc dùng firebutton nếu có
-                    end)
-                    if not ok then
-                        pcall(function() gui:Activate() end)
-                    end
-                    return true
-                end
+local function clickFishing()
+    local btn = getFishingButton()
+    if btn then
+        -- Ưu tiên FireServer nếu có connection
+        local ok = pcall(function()
+            if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                btn.MouseButton1Down:Fire()
+                task.wait(0.05)
+                btn.MouseButton1Up:Fire()
+                btn.MouseButton1Click:Fire()
             end
-        end
+        end)
+        return ok
     end
     return false
 end
- 
+
 -- ============================================
--- HÀM PHÁT HIỆN CÁ CẮN
+-- HÀM CANH PERFECT / LUCKY
+-- Tìm thanh progress / indicator trong GUI
+-- và bấm đúng lúc vào vùng Perfect
 -- ============================================
-local function isFishBiting()
-    -- Kiểm tra trong workspace
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        local name = obj.Name:lower()
-        if name:find("bite") or name:find("nibble") or name:find("bobber") then
-            -- Nếu là BoolValue
-            if obj:IsA("BoolValue") and obj.Value == true then
-                return true
-            end
-            -- Nếu là BasePart đang chìm
-            if obj:IsA("BasePart") and obj.Position.Y < -0.5 then
-                return true
-            end
-        end
-    end
- 
-    -- Kiểm tra trong PlayerGui (popup / indicator)
+local function watchAndHitPerfect()
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if playerGui then
-        for _, obj in ipairs(playerGui:GetDescendants()) do
-            local name = obj.Name:lower()
-            if (name:find("bite") or name:find("catch") or name:find("reel")) then
-                if obj:IsA("Frame") or obj:IsA("ImageLabel") then
-                    if obj.Visible then return true end
-                end
+    if not playerGui then return end
+
+    -- Tìm frame chứa mini-game timing (thanh kéo cần)
+    local timingFrame = nil
+    local indicator   = nil  -- khối/mũi tên di chuyển
+    local perfectZone = nil  -- vùng màu xanh/vàng "Perfect"
+
+    -- Tìm theo tên phổ biến
+    local frameNames   = {"FishingUI","FishUI","CatchUI","ReelUI","MiniGame","TimingBar","FishBar"}
+    local indicNames   = {"Indicator","Arrow","Pointer","Ball","Slider","Moving","Needle"}
+    local perfectNames = {"Perfect","Lucky","Green","Zone","Target","GoodZone","PerfectZone"}
+
+    for _, obj in ipairs(playerGui:GetDescendants()) do
+        local n = obj.Name
+        for _, fn in ipairs(frameNames) do
+            if n:lower():find(fn:lower()) and obj:IsA("Frame") then
+                timingFrame = obj
+            end
+        end
+        for _, ind in ipairs(indicNames) do
+            if n:lower():find(ind:lower()) and (obj:IsA("Frame") or obj:IsA("ImageLabel")) then
+                indicator = obj
+            end
+        end
+        for _, pn in ipairs(perfectNames) do
+            if n:lower():find(pn:lower()) and (obj:IsA("Frame") or obj:IsA("ImageLabel")) then
+                perfectZone = obj
             end
         end
     end
- 
-    return false
-end
- 
--- ============================================
--- VÒNG LẶP AUTO FARM CHÍNH
--- ============================================
-local statusParagraph
-local countParagraph
- 
-local function setStatus(msg)
-    if statusParagraph then
-        statusParagraph:SetDesc(msg)
+
+    -- Nếu tìm thấy indicator và perfectZone thì canh bấm
+    if indicator and perfectZone then
+        local maxWait = 10
+        local elapsed = 0
+        while autoFarmOn and elapsed < maxWait do
+            -- Lấy vị trí tuyệt đối
+            local indPos  = indicator.AbsolutePosition
+            local indSize = indicator.AbsoluteSize
+            local perPos  = perfectZone.AbsolutePosition
+            local perSize = perfectZone.AbsoluteSize
+
+            local indCenter  = indPos.X + indSize.X / 2
+            local perLeft    = perPos.X
+            local perRight   = perPos.X + perSize.X
+
+            -- Nếu indicator đang trong vùng Perfect → bấm
+            if indCenter >= perLeft and indCenter <= perRight then
+                clickFishing()
+                return
+            end
+
+            task.wait(0.02) -- check mỗi 20ms để không bỏ lỡ
+            elapsed = elapsed + 0.02
+        end
+
+        -- Fallback: bấm sau khoảng thời gian trung bình nếu không detect được
+        clickFishing()
+    else
+        -- Không tìm thấy UI timing → bấm theo delay cố định
+        task.wait(0.6)
+        clickFishing()
     end
 end
- 
-local function setCount()
-    if countParagraph then
-        countParagraph:SetDesc(tostring(totalCaught) .. " con cá")
-    end
-end
- 
+
+-- ============================================
+-- VÒNG LẶP CHÍNH
+-- ============================================
 local function runAutoFarm()
     while autoFarmOn do
-        -- BƯỚC 1: Bấm nút Fishing (cast cần)
-        setStatus("🎣 Đang thả cần câu...")
- 
-        local fishRemote = findFishingRemote()
-        local didClick = false
- 
-        if fishRemote then
-            pcall(function()
-                if fishRemote:IsA("RemoteEvent") then
-                    fishRemote:FireServer()
-                elseif fishRemote:IsA("RemoteFunction") then
-                    fishRemote:InvokeServer()
-                end
-            end)
-            didClick = true
-        end
- 
-        if not didClick then
-            didClick = clickFishingButton()
-        end
- 
-        if not didClick then
-            setStatus("⚠️ Không tìm thấy nút Fishing! Đang thử lại...")
-            task.wait(2)
+        -- Bước 1: Bấm nút Fishing để cast
+        local success = clickFishing()
+
+        if not success then
+            -- Nút chưa xuất hiện, chờ rồi thử lại
+            task.wait(1)
         else
-            task.wait(castDelay)
- 
-            -- BƯỚC 2: Chờ cá cắn
-            setStatus("⏳ Đang chờ cá cắn...")
-            local elapsed = 0
-            local bit = false
- 
-            while autoFarmOn and elapsed < waitBite do
-                if isFishBiting() then
-                    bit = true
-                    break
-                end
-                task.wait(0.4)
-                elapsed = elapsed + 0.4
-            end
- 
-            -- BƯỚC 3: Reel in
-            task.wait(reelDelay)
-            setStatus("🐟 Kéo cần lên...")
- 
-            local reelRemote = findReelRemote()
-            if reelRemote then
-                pcall(function()
-                    if reelRemote:IsA("RemoteEvent") then
-                        reelRemote:FireServer()
-                    elseif reelRemote:IsA("RemoteFunction") then
-                        reelRemote:InvokeServer()
-                    end
-                end)
-            else
-                -- Thử bấm lại nút để reel
-                clickFishingButton()
-            end
- 
-            if bit then
-                totalCaught = totalCaught + 1
-                setCount()
-                setStatus("✅ Câu được cá! Tổng: " .. totalCaught)
-                Fluent:Notify({
-                    Title = "🐟 Câu được cá!",
-                    Content = "Tổng cộng: " .. totalCaught .. " con",
-                    Duration = 2
-                })
-            else
-                setStatus("😔 Không có cá, thử lại...")
-            end
- 
-            task.wait(1.2)
+            -- Bước 2: Chờ mini-game timing xuất hiện
+            task.wait(1.5)
+
+            -- Bước 3: Canh Perfect và bấm
+            watchAndHitPerfect()
+
+            -- Bước 4: Chờ animation kết thúc rồi lặp lại
+            task.wait(2)
         end
     end
- 
-    setStatus("⛔ Auto Farm đã dừng.")
 end
- 
+
 -- ============================================
--- TAB AUTO FARM - UI
+-- TAB AUTO FARM - CHỈ 1 TOGGLE
 -- ============================================
- 
--- Status & Count hiển thị
-statusParagraph = Tabs.AutoFarm:AddParagraph({
-    Title = "📡 Trạng thái",
-    Content = "Chưa bắt đầu..."
-})
- 
-countParagraph = Tabs.AutoFarm:AddParagraph({
-    Title = "🐟 Đã câu được",
-    Content = "0 con cá"
-})
- 
--- TOGGLE CHÍNH: Enable Auto Farm
 Tabs.AutoFarm:AddToggle("EnableAutoFarm", {
     Title = "Enable Auto Farm",
-    Description = "Tự động bấm nút Fishing trong Titan Fishing",
+    Description = "Tự động nhấn nút Fishing và canh Perfect",
     Default = false,
     Callback = function(state)
         autoFarmOn = state
         if state then
-            setStatus("🟢 Auto Farm đang chạy...")
             Fluent:Notify({
                 Title = "Auto Farm",
-                Content = "Đã bật! Đang câu cá tự động...",
+                Content = "Đã bật! Đang câu cá & canh Perfect...",
                 Duration = 3
             })
-            farmThread = task.spawn(runAutoFarm)
+            task.spawn(runAutoFarm)
         else
-            autoFarmOn = false
-            setStatus("🔴 Auto Farm đã tắt.")
             Fluent:Notify({
                 Title = "Auto Farm",
                 Content = "Đã tắt Auto Farm.",
@@ -290,70 +204,33 @@ Tabs.AutoFarm:AddToggle("EnableAutoFarm", {
         end
     end
 })
- 
--- Nút reset bộ đếm
-Tabs.AutoFarm:AddButton({
-    Title = "🔄 Reset Bộ Đếm",
-    Description = "Đặt lại số cá về 0",
-    Callback = function()
-        totalCaught = 0
-        setCount()
-        Fluent:Notify({
-            Title = "Reset",
-            Content = "Đã reset bộ đếm.",
-            Duration = 2
-        })
-    end
-})
- 
+
 -- ============================================
 -- TAB SETTINGS
 -- ============================================
-Tabs.Settings:AddSlider("CastDelay", {
-    Title = "⏱️ Thời gian sau khi Cast (giây)",
-    Description = "Chờ bao lâu sau khi thả cần",
+local castWait = 1.5
+local reelWait = 2.0
+
+Tabs.Settings:AddSlider("CastWait", {
+    Title = "⏱️ Chờ sau khi Cast (giây)",
+    Description = "Thời gian chờ trước khi mini-game xuất hiện",
     Default = 1.5,
     Min = 0.5,
     Max = 5,
     Rounding = 1,
-    Callback = function(val)
-        castDelay = val
-    end
+    Callback = function(v) castWait = v end
 })
- 
-Tabs.Settings:AddSlider("ReelDelay", {
-    Title = "🎯 Thời gian trước khi Reel (giây)",
-    Description = "Chờ bao lâu trước khi kéo cần",
-    Default = 0.5,
-    Min = 0,
-    Max = 3,
+
+Tabs.Settings:AddSlider("ReelWait", {
+    Title = "🔄 Chờ sau khi Reel (giây)",
+    Description = "Thời gian chờ trước vòng câu tiếp theo",
+    Default = 2.0,
+    Min = 0.5,
+    Max = 6,
     Rounding = 1,
-    Callback = function(val)
-        reelDelay = val
-    end
+    Callback = function(v) reelWait = v end
 })
- 
-Tabs.Settings:AddSlider("WaitBite", {
-    Title = "🕐 Thời gian chờ cá cắn (giây)",
-    Description = "Tối đa bao lâu chờ trước khi cast lại",
-    Default = 12,
-    Min = 5,
-    Max = 30,
-    Rounding = 1,
-    Callback = function(val)
-        waitBite = val
-    end
-})
- 
-Tabs.Settings:AddToggle("NotifyEach", {
-    Title = "🔔 Thông báo mỗi lần câu được",
-    Default = true,
-    Callback = function(state)
-        _G.TF_Notify = state
-    end
-})
- 
--- Save/Load config
+
 SaveManager:SetLibrary(Fluent)
 InterfaceManager:SetLibrary(Fluent)
 SaveManager:IgnoreThemeSettings()
@@ -362,41 +239,34 @@ InterfaceManager:SetFolder("TitanFishing_AF")
 SaveManager:SetFolder("TitanFishing_AF/configs")
 SaveManager:BuildConfigSection(Tabs.Settings)
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
- 
+
 -- ============================================
 -- TAB INFO
 -- ============================================
 Tabs.Info:AddParagraph({
     Title = "📖 Hướng dẫn",
-    Content = "1. Vào game Titan Fishing\n2. Đứng gần khu vực câu cá\n3. Bật toggle 'Enable Auto Farm'\n4. Script sẽ tự động bấm nút Fishing"
+    Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu\n3. Bật toggle 'Enable Auto Farm'\n4. Script tự bấm nút Fishing và canh Perfect"
 })
- 
-Tabs.Info:AddParagraph({
-    Title = "⚙️ Cách hoạt động",
-    Content = "Script tự tìm RemoteEvent câu cá hoặc nút Fishing trong game, tự động thả cần và kéo lên liên tục."
-})
- 
+
 Tabs.Info:AddParagraph({
     Title = "⚠️ Lưu ý",
-    Content = "Nếu script không nhận nút, hãy chỉnh 'Cast Delay' trong Settings lên cao hơn."
+    Content = "Nếu không canh được Perfect, vào Settings tăng 'Chờ sau khi Cast' lên để script có thêm thời gian nhận diện UI timing."
 })
- 
+
 -- ============================================
 -- KHỞI ĐỘNG
 -- ============================================
 Window:SelectTab(1)
- 
+
 Fluent:Notify({
     Title = "🎣 Titan Fishing Auto Farm",
-    Content = "Script tải thành công! Vào tab Auto Farm để bắt đầu.",
+    Content = "Đã tải thành công! Bật toggle để bắt đầu.",
     Duration = 5
 })
- 
--- Reset khi nhân vật respawn
+
 LocalPlayer.CharacterAdded:Connect(function()
     if autoFarmOn then
         autoFarmOn = false
-        setStatus("⚠️ Nhân vật respawn - vui lòng bật lại!")
         Fluent:Notify({
             Title = "Respawn",
             Content = "Nhân vật đã respawn, hãy bật lại Auto Farm.",
@@ -404,4 +274,3 @@ LocalPlayer.CharacterAdded:Connect(function()
         })
     end
 end)
- 
