@@ -35,7 +35,7 @@ local keyMap = { Z = Enum.KeyCode.Z, X = Enum.KeyCode.X, C = Enum.KeyCode.C, V =
 local Window = WindUI:CreateWindow({
     Title        = "Titan Fishing",
     Icon         = "fish",
-    Author       = "Auto Farm Tool",
+    Author       = "Dthinhne",
     Folder       = "TitanFishing_AF",
     Size         = UDim2.fromOffset(580, 460),
     Transparency = 0.85,
