@@ -1,97 +1,80 @@
 -- ============================================
 --   Titan Fishing - Auto Farm Script
---   UI: Fluent Library | Executor: Delta X
---   Hoàn toàn tự động - không cần bấm tay
---   Dùng VirtualInputManager tap tọa độ nút
+--   UI: Wind UI Library (Footagesus)
 -- ============================================
 
-local Fluent = loadstring(game:HttpGet(
-    "https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"
-))()
-local SaveManager = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"
-))()
-local InterfaceManager = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"
+local WindUI = loadstring(game:HttpGet(
+    "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
 ))()
 
--- ============================================
--- SERVICES
--- ============================================
-local Players  = game:GetService("Players")
-local VIM      = game:GetService("VirtualInputManager")
-local LocalPlayer = Players.LocalPlayer
+local Players          = game:GetService("Players")
+local VIM              = game:GetService("VirtualInputManager")
+local LocalPlayer      = Players.LocalPlayer
+
+local BTN_X     = 694
+local BTN_Y     = 335
+local BTN_INSET = 58
+local offsetX   = 30
+local offsetY   = 0
+
+local autoFarmOn = false
+local castWait   = 0.8
+local reelWait   = 2.0
+local clickSpeed = 0.08
+
+local autoSkillOn  = false
+local selectedKeys = {}
+local skillDelay   = 0.3
+local freezeOn     = false
+
+local keyMap = { Z = Enum.KeyCode.Z, X = Enum.KeyCode.X, C = Enum.KeyCode.C, V = Enum.KeyCode.V }
 
 -- ============================================
 -- WINDOW
 -- ============================================
-local Window = Fluent:CreateWindow({
-    Title = "Titan Fishing",
-    SubTitle = "Auto Farm Tool",
-    TabWidth = 160,
-    Size = UDim2.fromOffset(560, 420),
-    Acrylic = false,
-    Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.LeftControl
+local Window = WindUI:CreateWindow({
+    Title        = "Titan Fishing",
+    Icon         = "fish",
+    Author       = "Auto Farm Tool",
+    Folder       = "TitanFishing_AF",
+    Size         = UDim2.fromOffset(580, 460),
+    Transparency = 0.85,
+    Theme        = "Dark",
+    DisableCmd   = false,
+    ToogleKey    = Enum.KeyCode.RightShift,
 })
 
-local Tabs = {
-    AutoFarm = Window:AddTab({ Title = "Auto Farm", Icon = "fish" }),
-    Settings  = Window:AddTab({ Title = "Settings",  Icon = "settings" }),
-    Info      = Window:AddTab({ Title = "Info",       Icon = "info" }),
-}
+-- ============================================
+-- TABS
+-- ============================================
+local TabAutoFarm  = Window:Tab({ Title = "Auto Farm",  Name = "Auto Farm",  Icon = "zap"      })
+local TabAutoSkill = Window:Tab({ Title = "Auto Skill", Name = "Auto Skill", Icon = "keyboard" })
+local TabSettings  = Window:Tab({ Title = "Settings",   Name = "Settings",   Icon = "settings" })
+local TabInfo      = Window:Tab({ Title = "Info",       Name = "Info",       Icon = "info"     })
 
 -- ============================================
--- BIẾN
--- ============================================
-local autoFarmOn = false
-local castWait   = 0.8   -- chờ sau lần tap 1
-local reelWait   = 2.0   -- chờ sau khi thả cần xong
-
--- ============================================
--- HÀM TAP VÀO TỌA ĐỘ (VirtualInputManager)
+-- HÀM
 -- ============================================
 local function tapAt(x, y)
     pcall(function()
         VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
-        task.wait(0.08)
+        task.wait(clickSpeed)
         VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
     end)
 end
 
--- ============================================
--- HÀM TÌM VỊ TRÍ FISHING BUTTON TỰ ĐỘNG
--- Dùng AbsolutePosition để luôn đúng dù resize
--- ============================================
-local function getFishingBtnPos()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return 316, 595 end -- fallback tọa độ mặc định
-
-    for _, obj in ipairs(playerGui:GetDescendants()) do
-        if obj:IsA("TextButton") and obj.Name == "FishingButton"
-           and obj.Parent and obj.Parent.Name == "RodGUI" then
-            local pos  = obj.AbsolutePosition
-            local size = obj.AbsoluteSize
-            return math.floor(pos.X + size.X / 2),
-                   math.floor(pos.Y + size.Y / 2)
-        end
-    end
-
-    return 694, 277 -- fallback
+local function pressKey(keyCode)
+    pcall(function()
+        VIM:SendKeyEvent(true,  keyCode, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, keyCode, false, game)
+    end)
 end
 
--- ============================================
--- HÀM TÌM VÙNG PERFECT CHÍNH XÁC
--- Frame "Top" parent: Main RGB(0,255,127) = xanh lá
--- Frame "Bar" parent: CanvasGroup = con trỏ di chuyển
--- ============================================
 local function getTimingFrames()
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
     if not playerGui then return nil, nil end
-
-    local bar     = nil
-    local perfect = nil
-
+    local bar, perfect = nil, nil
     for _, obj in ipairs(playerGui:GetDescendants()) do
         if obj:IsA("Frame") and obj.Name == "Bar"
            and obj.Parent and obj.Parent.Name == "CanvasGroup" then
@@ -100,187 +83,196 @@ local function getTimingFrames()
         if obj:IsA("Frame") and obj.Name == "Top"
            and obj.Parent and obj.Parent.Name == "Main" then
             local c = obj.BackgroundColor3
-            if c.R < 0.1 and c.G > 0.9 and c.B > 0.4 then
-                perfect = obj
-            end
+            if c.R < 0.1 and c.G > 0.9 and c.B > 0.4 then perfect = obj end
         end
     end
-
     return bar, perfect
 end
 
--- ============================================
--- CHỜ MINI GAME XUẤT HIỆN
--- ============================================
 local function waitForMiniGame(timeout)
     timeout = timeout or 5
     local elapsed = 0
     while elapsed < timeout do
         local bar, perfect = getTimingFrames()
-        if bar and perfect and bar.Visible and perfect.Visible then
-            return bar, perfect
-        end
+        if bar and perfect and bar.Visible and perfect.Visible then return bar, perfect end
         task.wait(0.05)
         elapsed = elapsed + 0.05
     end
     return nil, nil
 end
 
--- ============================================
--- CANH PERFECT VÀ TAP
--- ============================================
 local function hitPerfect()
     local bar, perfect = waitForMiniGame(5)
-    local bx, by = getFishingBtnPos()
-
     if not bar or not perfect then
-        -- Không thấy mini game → tap sau delay cố định
         task.wait(0.6)
-        tapAt(bx, by)
+        tapAt(BTN_X + offsetX, BTN_Y + offsetY)
         return
     end
-
-    local maxWait = 10
-    local elapsed = 0
-
+    local maxWait, elapsed = 10, 0
     while autoFarmOn and elapsed < maxWait do
-        if not bar.Visible or not perfect.Visible then
-            break
-        end
-
+        if not bar.Visible or not perfect.Visible then break end
         local barCenter = bar.AbsolutePosition.X + bar.AbsoluteSize.X / 2
         local perfLeft  = perfect.AbsolutePosition.X
         local perfRight = perfLeft + perfect.AbsoluteSize.X
-
-        -- Khi Bar vào vùng Perfect → tap ngay!
         if barCenter >= perfLeft and barCenter <= perfRight then
-            tapAt(bx, by)
+            tapAt(BTN_X + offsetX, BTN_Y + offsetY)
             return
         end
-
-        task.wait(0.016) -- 60fps
+        task.wait(0.016)
         elapsed = elapsed + 0.016
     end
-
-    -- Fallback
-    tapAt(bx, by)
+    tapAt(BTN_X + offsetX, BTN_Y + offsetY)
 end
 
--- ============================================
--- VÒNG LẶP AUTO FARM HOÀN TOÀN TỰ ĐỘNG
--- ============================================
 local function runAutoFarm()
     while autoFarmOn do
-        local bx, by = getFishingBtnPos()
-
-        -- Bước 1: Tap lần 1 → vào trạng thái canh luck
-        tapAt(bx, by)
-
-        -- Bước 2: Chờ mini game xuất hiện
+        tapAt(BTN_X + offsetX, BTN_Y + offsetY)
         task.wait(castWait)
-
-        -- Bước 3: Canh Perfect → tap lần 2
         hitPerfect()
-
-        -- Bước 4: Chờ animation xong
         task.wait(reelWait)
     end
 end
 
--- ============================================
--- TAB AUTO FARM - CHỈ 1 TOGGLE
--- ============================================
-Tabs.AutoFarm:AddToggle("EnableAutoFarm", {
-    Title = "Enable Auto Farm",
-    Description = "Tự động câu cá và canh Perfect x2 Luck",
-    Default = false,
-    Callback = function(state)
-        autoFarmOn = state
-        if state then
-            Fluent:Notify({
-                Title = "🎣 Auto Farm",
-                Content = "Đã bật! Đang tự động câu & canh Perfect...",
-                Duration = 3
-            })
-            task.spawn(runAutoFarm)
+local function runAutoSkill()
+    while autoSkillOn do
+        if #selectedKeys == 0 then
+            task.wait(0.3)
         else
-            Fluent:Notify({
-                Title = "Auto Farm",
-                Content = "Đã tắt.",
-                Duration = 2
-            })
+            for _, keyName in ipairs(selectedKeys) do
+                if not autoSkillOn then break end
+                local kc = keyMap[keyName]
+                if kc then pressKey(kc) end
+                task.wait(skillDelay)
+            end
         end
     end
+end
+
+-- ============================================
+-- TAB AUTO FARM
+-- ============================================
+TabAutoFarm:Paragraph({ Title = "Current Device", Content = "Mobile" })
+
+TabAutoFarm:Toggle({
+    Title    = "Enable Auto Farm Mobile",
+    Flag     = "AutoFarm",
+    Default  = false,
+    Callback = function(state)
+        autoFarmOn = state
+        if state then task.spawn(runAutoFarm) end
+    end,
+})
+
+local offsetLabel = TabAutoFarm:Paragraph({
+    Title   = "Current Offset:",
+    Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY),
+})
+
+TabAutoFarm:Input({
+    Title       = "X Axis Offset",
+    Flag        = "XOffset",
+    Placeholder = "Ex: 40",
+    Callback    = function(val)
+        local num = tonumber(val)
+        if num then
+            offsetX = num
+            offsetLabel:Set({ Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY) })
+        end
+    end,
+})
+
+TabAutoFarm:Input({
+    Title       = "Y Axis Offset",
+    Flag        = "YOffset",
+    Placeholder = "Ex: 0",
+    Callback    = function(val)
+        local num = tonumber(val)
+        if num then
+            offsetY = num
+            offsetLabel:Set({ Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY) })
+        end
+    end,
+})
+
+-- ============================================
+-- TAB AUTO SKILL
+-- ============================================
+TabAutoSkill:Dropdown({
+    Title    = "Skill Keys Mobile",
+    Flag     = "SkillKeys",
+    Values   = { "Z", "X", "C", "V" },
+    Default  = {},
+    Multi    = true,
+    Callback = function(selected)
+        selectedKeys = {}
+        if type(selected) == "table" then
+            for k, v in pairs(selected) do
+                if type(k) == "string" and v == true then
+                    -- dạng { Z = true, X = true }
+                    table.insert(selectedKeys, k)
+                elseif type(k) == "number" and type(v) == "string" then
+                    -- dạng { "Z", "X" }
+                    table.insert(selectedKeys, v)
+                end
+            end
+        end
+    end,
+})
+
+TabAutoSkill:Toggle({
+    Title    = "Auto Skill Mobile",
+    Flag     = "AutoSkill",
+    Default  = false,
+    Callback = function(state)
+        autoSkillOn = state
+        if state then task.spawn(runAutoSkill) end
+    end,
+})
+
+TabAutoSkill:Toggle({
+    Title    = "Freeze Character",
+    Flag     = "FreezeChar",
+    Default  = false,
+    Callback = function(state)
+        freezeOn = state
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = state and 0 or 16
+            hum.JumpPower = state and 0 or 50
+        end
+    end,
 })
 
 -- ============================================
 -- TAB SETTINGS
 -- ============================================
-Tabs.Settings:AddSlider("CastWait", {
-    Title = "⏱️ Chờ sau tap lần 1 (giây)",
-    Description = "Thời gian chờ trước khi mini-game xuất hiện",
-    Default = 0.8,
-    Min = 0.3,
-    Max = 3,
-    Rounding = 1,
-    Callback = function(v) castWait = v end
-})
-
-Tabs.Settings:AddSlider("ReelWait", {
-    Title = "🔄 Chờ sau khi thả cần (giây)",
-    Description = "Thời gian chờ trước vòng câu tiếp theo",
-    Default = 2.0,
-    Min = 0.5,
-    Max = 6,
-    Rounding = 1,
-    Callback = function(v) reelWait = v end
-})
-
-SaveManager:SetLibrary(Fluent)
-InterfaceManager:SetLibrary(Fluent)
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({})
-InterfaceManager:SetFolder("TitanFishing_AF")
-SaveManager:SetFolder("TitanFishing_AF/configs")
-SaveManager:BuildConfigSection(Tabs.Settings)
-InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+TabSettings:Slider({ Title = "Chờ sau tap lần 1 (giây)",   Flag = "CastWait",   Min = 0.3,  Max = 3,   Default = 0.8, Decimals = 1, Callback = function(v) castWait   = v       end })
+TabSettings:Slider({ Title = "Chờ sau khi thả cần (giây)", Flag = "ReelWait",   Min = 0.5,  Max = 6,   Default = 2.0, Decimals = 1, Callback = function(v) reelWait   = v       end })
+TabSettings:Slider({ Title = "Tốc độ click (ms)",           Flag = "ClickSpeed", Min = 10,   Max = 300, Default = 80,  Decimals = 0, Callback = function(v) clickSpeed = v / 1000 end })
+TabSettings:Slider({ Title = "Delay Auto Skill (giây)",     Flag = "SkillDelay", Min = 0.05, Max = 2.0, Default = 0.3, Decimals = 2, Callback = function(v) skillDelay = v       end })
 
 -- ============================================
 -- TAB INFO
 -- ============================================
-Tabs.Info:AddParagraph({
-    Title = "📖 Hướng dẫn",
-    Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật toggle 'Enable Auto Farm'\n4. Script tự động tap nút Fishing và canh Perfect!"
-})
-
-Tabs.Info:AddParagraph({
-    Title = "⚙️ Cách hoạt động",
-    Content = "Script dùng VirtualInputManager để tap vào nút FishingButton, sau đó theo dõi Frame 'Bar' và canh đúng vùng 'Top' (xanh lá = Perfect x2 Luck) rồi tap lần 2."
-})
-
-Tabs.Info:AddParagraph({
-    Title = "⚠️ Lưu ý",
-    Content = "Nếu không canh được Perfect, vào Settings tăng 'Chờ sau tap lần 1' lên."
-})
+TabInfo:Paragraph({ Title = "📖 Cách dùng",  Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật Enable Auto Farm Mobile\n4. Script tự động tap và canh Perfect!" })
+TabInfo:Paragraph({ Title = "⚙️ Tọa độ gốc", Content = string.format("BTN_X = %d | BTN_Y = %d | INSET = %d", BTN_X, BTN_Y, BTN_INSET) })
+TabInfo:Paragraph({ Title = "⌨️ Phím tắt",   Content = "RightShift → Ẩn / Hiện UI" })
+TabInfo:Paragraph({ Title = "⚠️ Lưu ý",      Content = "Dùng X/Y Axis Offset để căn chỉnh tọa độ tap." })
 
 -- ============================================
 -- KHỞI ĐỘNG
 -- ============================================
-Window:SelectTab(1)
-
-Fluent:Notify({
-    Title = "🎣 Titan Fishing Auto Farm",
-    Content = "Đã tải! Bật toggle để bắt đầu tự động câu cá.",
-    Duration = 5
+WindUI:Notify({
+    Title    = "🎣 Titan Fishing Loaded",
+    Content  = string.format("X=%d Y=%d | Offset X=%d Y=%d", BTN_X, BTN_Y, offsetX, offsetY),
+    Icon     = "fish",
+    Duration = 5,
 })
 
 LocalPlayer.CharacterAdded:Connect(function()
-    if autoFarmOn then
-        autoFarmOn = false
-        Fluent:Notify({
-            Title = "Respawn",
-            Content = "Đã respawn! Bật lại Auto Farm.",
-            Duration = 4
-        })
-    end
+    autoFarmOn  = false
+    autoSkillOn = false
+    freezeOn    = false
 end)
