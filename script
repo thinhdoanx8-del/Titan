@@ -9,6 +9,7 @@ local WindUI = loadstring(game:HttpGet(
 
 local Players          = game:GetService("Players")
 local VIM              = game:GetService("VirtualInputManager")
+local TweenService     = game:GetService("TweenService")
 local LocalPlayer      = Players.LocalPlayer
 
 local BTN_X     = 694
@@ -26,8 +27,8 @@ local autoSkillOn  = false
 local selectedKeys = {}
 local skillDelay   = 0.3
 local freezeOn     = false
-
-local keyMap = { Z = Enum.KeyCode.Z, X = Enum.KeyCode.X, C = Enum.KeyCode.C, V = Enum.KeyCode.V }
+local autoSellOn   = false
+local sellInterval = 60
 
 -- ============================================
 -- WINDOW
@@ -47,10 +48,11 @@ local Window = WindUI:CreateWindow({
 -- ============================================
 -- TABS
 -- ============================================
-local TabAutoFarm  = Window:Tab({ Title = "Auto Farm",  Name = "Auto Farm",  Icon = "zap"      })
-local TabAutoSkill = Window:Tab({ Title = "Auto Skill", Name = "Auto Skill", Icon = "keyboard" })
-local TabSettings  = Window:Tab({ Title = "Settings",   Name = "Settings",   Icon = "settings" })
-local TabInfo      = Window:Tab({ Title = "Info",       Name = "Info",       Icon = "info"     })
+local TabAutoFarm  = Window:Tab({ Title = "Auto Farm",  Name = "Auto Farm",  Icon = "zap"           })
+local TabAutoSkill = Window:Tab({ Title = "Auto Skill", Name = "Auto Skill", Icon = "keyboard"      })
+local TabAutoSell  = Window:Tab({ Title = "Auto Sell",  Name = "Auto Sell",  Icon = "shopping-cart" })
+local TabSettings  = Window:Tab({ Title = "Settings",   Name = "Settings",   Icon = "settings"      })
+local TabInfo      = Window:Tab({ Title = "Info",       Name = "Info",       Icon = "info"          })
 
 -- ============================================
 -- HÀM
@@ -63,12 +65,21 @@ local function tapAt(x, y)
     end)
 end
 
-local function pressKey(keyCode)
-    pcall(function()
-        VIM:SendKeyEvent(true,  keyCode, false, game)
-        task.wait(0.05)
-        VIM:SendKeyEvent(false, keyCode, false, game)
-    end)
+-- Dùng firesignal cho skill
+local function pressSkill(skillName)
+    for _, obj in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+        if obj.Name == skillName and obj.Parent.Name == "Skills" then
+            pcall(function() firesignal(obj.MouseButton1Click) end)
+            pcall(function() firesignal(obj.Activated) end)
+            pcall(function() firesignal(obj.TouchTap) end)
+            pcall(function()
+                firesignal(obj.MouseButton1Down, 0, 0)
+                task.wait(0.05)
+                firesignal(obj.MouseButton1Up, 0, 0)
+            end)
+            break
+        end
+    end
 end
 
 local function getTimingFrames()
@@ -138,13 +149,94 @@ local function runAutoSkill()
         if #selectedKeys == 0 then
             task.wait(0.3)
         else
-            for _, keyName in ipairs(selectedKeys) do
+            for _, skillName in ipairs(selectedKeys) do
                 if not autoSkillOn then break end
-                local kc = keyMap[keyName]
-                if kc then pressKey(kc) end
+                pressSkill(skillName)
                 task.wait(skillDelay)
             end
         end
+    end
+end
+
+-- ============================================
+-- HÀM AUTO SELL
+-- ============================================
+local function doSell()
+    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    local root = char:WaitForChild("HumanoidRootPart")
+    local savedPos = root.CFrame
+
+    local nearestNPC  = nil
+    local nearestDist = math.huge
+    local nearestPP   = nil
+
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj.Name == "bluewaterrobux" and obj:IsA("Model") then
+            local part = obj.PrimaryPart or obj:FindFirstChildOfClass("BasePart")
+            if part then
+                local dist = (part.Position - root.Position).Magnitude
+                if dist < nearestDist then
+                    nearestDist = dist
+                    nearestNPC  = part
+                end
+            end
+        end
+    end
+
+    if not nearestNPC then return end
+
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") and obj.ActionText == "Interact" then
+            local part = obj.Parent
+            if part:IsA("BasePart") then
+                local dist = (part.Position - nearestNPC.Position).Magnitude
+                if dist < 15 then
+                    nearestPP = obj
+                    break
+                end
+            end
+        end
+    end
+
+    root.Anchored = true
+    local tween = TweenService:Create(root, TweenInfo.new(
+        2, Enum.EasingStyle.Linear, Enum.EasingDirection.Out
+    ), { CFrame = CFrame.new(nearestNPC.Position + Vector3.new(0, 0, 4)) })
+    tween:Play()
+    tween.Completed:Wait()
+    root.Anchored = false
+    task.wait(0.5)
+
+    if nearestPP then fireproximityprompt(nearestPP) end
+
+    task.wait(1)
+    for _, obj in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+        if obj:IsA("TextLabel") and string.lower(obj.Text):find("sell all") then
+            local parent = obj.Parent
+            pcall(function() firesignal(parent.MouseButton1Click) end)
+            pcall(function() firesignal(parent.Activated) end)
+            pcall(function()
+                firesignal(parent.MouseButton1Down, 0, 0)
+                task.wait(0.05)
+                firesignal(parent.MouseButton1Up, 0, 0)
+            end)
+        end
+    end
+
+    task.wait(1)
+    root.Anchored = true
+    local tweenBack = TweenService:Create(root, TweenInfo.new(
+        2, Enum.EasingStyle.Linear, Enum.EasingDirection.Out
+    ), { CFrame = savedPos })
+    tweenBack:Play()
+    tweenBack.Completed:Wait()
+    root.Anchored = false
+end
+
+local function runAutoSell()
+    while autoSellOn do
+        doSell()
+        task.wait(sellInterval)
     end
 end
 
@@ -200,7 +292,7 @@ TabAutoFarm:Input({
 TabAutoSkill:Dropdown({
     Title    = "Skill Keys Mobile",
     Flag     = "SkillKeys",
-    Values   = { "Z", "X", "C", "V" },
+    Values   = { "Skill1", "Skill2", "Skill3", "Skill4" },
     Default  = {},
     Multi    = true,
     Callback = function(selected)
@@ -208,10 +300,8 @@ TabAutoSkill:Dropdown({
         if type(selected) == "table" then
             for k, v in pairs(selected) do
                 if type(k) == "string" and v == true then
-                    -- dạng { Z = true, X = true }
                     table.insert(selectedKeys, k)
                 elseif type(k) == "number" and type(v) == "string" then
-                    -- dạng { "Z", "X" }
                     table.insert(selectedKeys, v)
                 end
             end
@@ -246,6 +336,38 @@ TabAutoSkill:Toggle({
 })
 
 -- ============================================
+-- TAB AUTO SELL
+-- ============================================
+TabAutoSell:Paragraph({ Title = "Auto Sell", Content = "Tự động tween đến NPC và bán cá" })
+
+TabAutoSell:Toggle({
+    Title    = "Enable Auto Sell",
+    Flag     = "AutoSell",
+    Default  = false,
+    Callback = function(state)
+        autoSellOn = state
+        if state then task.spawn(runAutoSell) end
+    end,
+})
+
+TabAutoSell:Button({
+    Title    = "Sell Now",
+    Callback = function()
+        task.spawn(doSell)
+    end,
+})
+
+TabAutoSell:Slider({
+    Title    = "Sell Interval (giây)",
+    Flag     = "SellInterval",
+    Min      = 10,
+    Max      = 300,
+    Default  = 60,
+    Decimals = 0,
+    Callback = function(v) sellInterval = v end,
+})
+
+-- ============================================
 -- TAB SETTINGS
 -- ============================================
 TabSettings:Slider({ Title = "Chờ sau tap lần 1 (giây)",   Flag = "CastWait",   Min = 0.3,  Max = 3,   Default = 0.8, Decimals = 1, Callback = function(v) castWait   = v       end })
@@ -275,4 +397,5 @@ LocalPlayer.CharacterAdded:Connect(function()
     autoFarmOn  = false
     autoSkillOn = false
     freezeOn    = false
+    autoSellOn  = false
 end)
