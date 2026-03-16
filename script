@@ -1,7 +1,7 @@
 -- ============================================
 --   Titan Fishing - Auto Farm Script
 --   UI: Wind UI Library (Footagesus)
---   Remote Cast[24] & Reel[42] + Auto Skill + Auto Sell
+--   Tích hợp: Remote + Click Method (tọa độ)
 -- ============================================
 
 local WindUI = loadstring(game:HttpGet(
@@ -17,12 +17,14 @@ local LocalPlayer      = Players.LocalPlayer
 local events   = game:GetService("ReplicatedStorage").Communication.Events
 local children = events:GetChildren()
 
+-- Tọa độ click cố định
 local BTN_X     = 694
 local BTN_Y     = 335
 local BTN_INSET = 58
 local offsetX   = 30
 local offsetY   = 0
 
+-- Biến trạng thái
 local autoFarmOn  = false
 local castWait    = 0.8
 local reelWait    = 2.0
@@ -33,6 +35,9 @@ local skillDelay  = 0.3
 local freezeOn    = false
 local autoSellOn  = false
 local sellInterval = 60
+
+-- 👇 BIẾN MỚI: Chọn phương thức (true = click, false = remote)
+local useClickMethod = false
 
 -- ============================================
 -- WINDOW
@@ -57,6 +62,17 @@ local TabAutoSkill = Window:Tab({ Title = "Auto Skill", Name = "Auto Skill", Ico
 local TabAutoSell  = Window:Tab({ Title = "Auto Sell",  Name = "Auto Sell",  Icon = "shopping-cart" })
 local TabSettings  = Window:Tab({ Title = "Settings",   Name = "Settings",   Icon = "settings"      })
 local TabInfo      = Window:Tab({ Title = "Info",       Name = "Info",       Icon = "info"          })
+
+-- ============================================
+-- HÀM CLICK
+-- ============================================
+local function tapAt(x, y)
+    pcall(function()
+        VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        task.wait(clickSpeed)
+        VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    end)
+end
 
 -- ============================================
 -- HÀM FISHING (REMOTE)
@@ -125,7 +141,11 @@ local function hitPerfect()
     local bar, perfect = waitForMiniGame(5)
     if not bar or not perfect then
         task.wait(0.6)
-        reelRod()
+        if useClickMethod then
+            tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+        else
+            reelRod()
+        end
         return
     end
     local maxWait, elapsed = 10, 0
@@ -135,18 +155,30 @@ local function hitPerfect()
         local perfLeft  = perfect.AbsolutePosition.X
         local perfRight = perfLeft + perfect.AbsoluteSize.X
         if barCenter >= perfLeft and barCenter <= perfRight then
-            reelRod()
+            if useClickMethod then
+                tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+            else
+                reelRod()
+            end
             return
         end
         task.wait(0.016)
         elapsed = elapsed + 0.016
     end
-    reelRod()
+    if useClickMethod then
+        tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+    else
+        reelRod()
+    end
 end
 
 local function runAutoFarm()
     while autoFarmOn do
-        castRod()
+        if useClickMethod then
+            tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+        else
+            castRod()
+        end
         task.wait(castWait)
         hitPerfect()
         task.wait(reelWait)
@@ -257,6 +289,16 @@ end
 -- ============================================
 TabAutoFarm:Paragraph({ Title = "Current Device", Content = "Mobile" })
 
+-- 👇 TOGGLE MỚI: Chọn phương thức Click thay vì Remote
+TabAutoFarm:Toggle({
+    Title    = "Use Click Method (tap tọa độ)",
+    Flag     = "UseClickMethod",
+    Default  = false,
+    Callback = function(state)
+        useClickMethod = state
+    end,
+})
+
 TabAutoFarm:Toggle({
     Title    = "Enable Auto Farm Mobile",
     Flag     = "AutoFarm",
@@ -264,6 +306,37 @@ TabAutoFarm:Toggle({
     Callback = function(state)
         autoFarmOn = state
         if state then task.spawn(runAutoFarm) end
+    end,
+})
+
+local offsetLabel = TabAutoFarm:Paragraph({
+    Title   = "Current Offset:",
+    Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY),
+})
+
+TabAutoFarm:Input({
+    Title       = "X Axis Offset",
+    Flag        = "XOffset",
+    Placeholder = "Ex: 40",
+    Callback    = function(val)
+        local num = tonumber(val)
+        if num then
+            offsetX = num
+            offsetLabel:Set({ Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY) })
+        end
+    end,
+})
+
+TabAutoFarm:Input({
+    Title       = "Y Axis Offset",
+    Flag        = "YOffset",
+    Placeholder = "Ex: 0",
+    Callback    = function(val)
+        local num = tonumber(val)
+        if num then
+            offsetY = num
+            offsetLabel:Set({ Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY) })
+        end
     end,
 })
 
@@ -358,17 +431,18 @@ TabSettings:Slider({ Title = "Delay Auto Skill (giây)",     Flag = "SkillDelay"
 -- ============================================
 -- TAB INFO
 -- ============================================
-TabInfo:Paragraph({ Title = "📖 Cách dùng",  Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật Enable Auto Farm Mobile\n4. Script tự động cast và canh Perfect!" })
+TabInfo:Paragraph({ Title = "📖 Cách dùng",  Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật Use Click Method nếu muốn dùng tap tọa độ\n4. Bật Auto Farm!" })
 TabInfo:Paragraph({ Title = "⚙️ Remote",      Content = "Cast: Events[24] | Reel: Events[42]" })
+TabInfo:Paragraph({ Title = "⚙️ Click",       Content = string.format("Tọa độ gốc: X=%d Y=%d | Offset X,Y có thể điều chỉnh", BTN_X, BTN_Y) })
 TabInfo:Paragraph({ Title = "⌨️ Phím tắt",   Content = "RightShift → Ẩn / Hiện UI" })
-TabInfo:Paragraph({ Title = "⚠️ Lưu ý",      Content = "Auto Farm dùng FireServer trực tiếp, không cần tap tọa độ!" })
+TabInfo:Paragraph({ Title = "⚠️ Lưu ý",      Content = "Nếu dùng Click Method, nhớ căn chỉnh offset cho đúng nút câu cá." })
 
 -- ============================================
 -- KHỞI ĐỘNG
 -- ============================================
 WindUI:Notify({
     Title    = "🎣 Titan Fishing Loaded",
-    Content  = "Remote Cast[24] Reel[42] đã sẵn sàng!",
+    Content  = "Remote Cast[24] Reel[42] | Click method có thể bật!",
     Icon     = "fish",
     Duration = 5,
 })
