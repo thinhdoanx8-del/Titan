@@ -36,7 +36,7 @@ local sellInterval = 60
 local Window = WindUI:CreateWindow({
     Title        = "Titan Fishing",
     Icon         = "fish",
-    Author       = "Dthinhne",
+    Author       = "Kratos!",
     Folder       = "TitanFishing_AF",
     Size         = UDim2.fromOffset(580, 460),
     Transparency = 0.85,
@@ -292,7 +292,7 @@ TabAutoFarm:Input({
 TabAutoSkill:Dropdown({
     Title    = "Skill Keys Mobile",
     Flag     = "SkillKeys",
-    Values   = { "Skill1", "Skill2", "Skill3", "Skill4" },
+    Values   = { "Z", "X", "C", "V" },
     Default  = {},
     Multi    = true,
     Callback = function(selected)
