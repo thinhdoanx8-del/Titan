@@ -1,6 +1,8 @@
 -- ============================================
 --   Titan Fishing - Auto Farm Script
 --   UI: Wind UI Library (Footagesus)
+--   Tích hợp: Tap liên tục X=694 Y=335 (có offset)
+--   Tốc độ click chỉnh trong Settings
 -- ============================================
 
 local WindUI = loadstring(game:HttpGet(
@@ -12,20 +14,20 @@ local VIM              = game:GetService("VirtualInputManager")
 local TweenService     = game:GetService("TweenService")
 local LocalPlayer      = Players.LocalPlayer
 
--- Remote Events
+-- Remote Events (giữ lại cho Auto Sell)
 local events   = game:GetService("ReplicatedStorage").Communication.Events
 local children = events:GetChildren()
 
+-- Tọa độ click cố định
 local BTN_X     = 694
 local BTN_Y     = 335
 local BTN_INSET = 58
 local offsetX   = 30
 local offsetY   = 0
 
+-- Biến trạng thái
 local autoFarmOn  = false
-local castWait    = 0.8
-local reelWait    = 2.0
-local clickSpeed  = 0.08
+local clickSpeed  = 0.08           -- tốc độ tap (giây), mặc định 0.08s = 80ms
 local autoSkillOn = false
 local selectedKeys = {}
 local skillDelay  = 0.3
@@ -58,18 +60,28 @@ local TabSettings  = Window:Tab({ Title = "Settings",   Name = "Settings",   Ico
 local TabInfo      = Window:Tab({ Title = "Info",       Name = "Info",       Icon = "info"          })
 
 -- ============================================
--- HÀM FISHING
+-- HÀM TAP
 -- ============================================
-local function castRod()
-    children[24]:FireServer()
+local function tapAt(x, y)
+    pcall(function()
+        VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
+        task.wait(0.05)  -- giữ chuột một chút
+        VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    end)
 end
 
-local function reelRod()
-    children[42]:FireServer()
+-- ============================================
+-- VÒNG LẶP AUTO FARM (TAP LIÊN TỤC)
+-- ============================================
+local function runAutoFarm()
+    while autoFarmOn do
+        tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+        task.wait(clickSpeed)  -- tốc độ tap do người dùng cài
+    end
 end
 
 -- ============================================
--- HÀM SKILL
+-- HÀM SKILL (giữ nguyên)
 -- ============================================
 local function pressSkill(skillName)
     for _, obj in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
@@ -87,74 +99,6 @@ local function pressSkill(skillName)
     end
 end
 
--- ============================================
--- HÀM TIMING PERFECT
--- ============================================
-local function getTimingFrames()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return nil, nil end
-    local bar, perfect = nil, nil
-    for _, obj in ipairs(playerGui:GetDescendants()) do
-        if obj:IsA("Frame") and obj.Name == "Bar"
-           and obj.Parent and obj.Parent.Name == "CanvasGroup" then
-            bar = obj
-        end
-        if obj:IsA("Frame") and obj.Name == "Top"
-           and obj.Parent and obj.Parent.Name == "Main" then
-            local c = obj.BackgroundColor3
-            if c.R < 0.1 and c.G > 0.9 and c.B > 0.4 then perfect = obj end
-        end
-    end
-    return bar, perfect
-end
-
-local function waitForMiniGame(timeout)
-    timeout = timeout or 5
-    local elapsed = 0
-    while elapsed < timeout do
-        local bar, perfect = getTimingFrames()
-        if bar and perfect and bar.Visible and perfect.Visible then return bar, perfect end
-        task.wait(0.05)
-        elapsed = elapsed + 0.05
-    end
-    return nil, nil
-end
-
-local function hitPerfect()
-    local bar, perfect = waitForMiniGame(5)
-    if not bar or not perfect then
-        task.wait(0.6)
-        reelRod()
-        return
-    end
-    local maxWait, elapsed = 10, 0
-    while autoFarmOn and elapsed < maxWait do
-        if not bar.Visible or not perfect.Visible then break end
-        local barCenter = bar.AbsolutePosition.X + bar.AbsoluteSize.X / 2
-        local perfLeft  = perfect.AbsolutePosition.X
-        local perfRight = perfLeft + perfect.AbsoluteSize.X
-        if barCenter >= perfLeft and barCenter <= perfRight then
-            reelRod()
-            return
-        end
-        task.wait(0.016)
-        elapsed = elapsed + 0.016
-    end
-    reelRod()
-end
-
-local function runAutoFarm()
-    while autoFarmOn do
-        castRod()
-        task.wait(castWait)
-        hitPerfect()
-        task.wait(reelWait)
-    end
-end
-
--- ============================================
--- HÀM AUTO SKILL
--- ============================================
 local function runAutoSkill()
     while autoSkillOn do
         if #selectedKeys == 0 then
@@ -170,7 +114,7 @@ local function runAutoSkill()
 end
 
 -- ============================================
--- HÀM AUTO SELL
+-- HÀM AUTO SELL (giữ nguyên)
 -- ============================================
 local function doSell()
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
@@ -256,21 +200,37 @@ end
 -- ============================================
 TabAutoFarm:Paragraph({ Title = "Current Device", Content = "Mobile" })
 
+-- TOGGLE CHÍNH: Bật auto farm tap liên tục
 TabAutoFarm:Toggle({
     Title    = "Enable Auto Farm Mobile",
     Flag     = "AutoFarm",
     Default  = false,
     Callback = function(state)
         autoFarmOn = state
-        if state then task.spawn(runAutoFarm) end
+        if state then
+            task.spawn(runAutoFarm)
+            WindUI:Notify({
+                Title = "🎣 Auto Farm BẬT",
+                Content = string.format("Đang tap X=%d Y=%d, tốc độ %.0f ms", BTN_X + offsetX, BTN_Y + offsetY, clickSpeed*1000),
+                Duration = 3
+            })
+        else
+            WindUI:Notify({
+                Title = "Auto Farm TẮT",
+                Content = "Đã dừng tap.",
+                Duration = 2
+            })
+        end
     end,
 })
 
+-- Hiển thị offset hiện tại
 local offsetLabel = TabAutoFarm:Paragraph({
     Title   = "Current Offset:",
     Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY),
 })
 
+-- Điều chỉnh offset X
 TabAutoFarm:Input({
     Title       = "X Axis Offset",
     Flag        = "XOffset",
@@ -284,6 +244,7 @@ TabAutoFarm:Input({
     end,
 })
 
+-- Điều chỉnh offset Y
 TabAutoFarm:Input({
     Title       = "Y Axis Offset",
     Flag        = "YOffset",
@@ -298,7 +259,7 @@ TabAutoFarm:Input({
 })
 
 -- ============================================
--- TAB AUTO SKILL
+-- TAB AUTO SKILL (giữ nguyên)
 -- ============================================
 TabAutoSkill:Dropdown({
     Title    = "Skill Keys Mobile",
@@ -347,7 +308,7 @@ TabAutoSkill:Toggle({
 })
 
 -- ============================================
--- TAB AUTO SELL
+-- TAB AUTO SELL (giữ nguyên)
 -- ============================================
 TabAutoSell:Paragraph({ Title = "Auto Sell", Content = "Tự động tween đến NPC và bán cá" })
 
@@ -381,24 +342,36 @@ TabAutoSell:Slider({
 -- ============================================
 -- TAB SETTINGS
 -- ============================================
-TabSettings:Slider({ Title = "Chờ sau cast (giây)",        Flag = "CastWait",   Min = 0.3,  Max = 3,   Default = 0.8, Decimals = 1, Callback = function(v) castWait   = v       end })
-TabSettings:Slider({ Title = "Chờ sau khi thả cần (giây)", Flag = "ReelWait",   Min = 0.5,  Max = 6,   Default = 2.0, Decimals = 1, Callback = function(v) reelWait   = v       end })
-TabSettings:Slider({ Title = "Delay Auto Skill (giây)",     Flag = "SkillDelay", Min = 0.05, Max = 2.0, Default = 0.3, Decimals = 2, Callback = function(v) skillDelay = v       end })
+-- Thêm slider điều chỉnh tốc độ click (ms)
+TabSettings:Slider({
+    Title    = "Tốc độ click (ms)",
+    Flag     = "ClickSpeed",
+    Min      = 10,
+    Max      = 500,
+    Default  = 80,
+    Decimals = 0,
+    Callback = function(v)
+        clickSpeed = v / 1000  -- chuyển từ ms sang giây
+    end
+})
+
+-- Các slider cũ giữ nguyên (cho Auto Skill nếu cần)
+TabSettings:Slider({ Title = "Delay Auto Skill (giây)", Flag = "SkillDelay", Min = 0.05, Max = 2.0, Default = 0.3, Decimals = 2, Callback = function(v) skillDelay = v end })
 
 -- ============================================
 -- TAB INFO
 -- ============================================
-TabInfo:Paragraph({ Title = "📖 Cách dùng",  Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật Enable Auto Farm Mobile\n4. Script tự động cast và canh Perfect!" })
-TabInfo:Paragraph({ Title = "⚙️ Remote",      Content = "Cast: Events[24] | Reel: Events[42]" })
+TabInfo:Paragraph({ Title = "📖 Cách dùng",  Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật Enable Auto Farm Mobile\n4. Điều chỉnh tốc độ click trong Settings nếu cần." })
+TabInfo:Paragraph({ Title = "⚙️ Tọa độ gốc", Content = string.format("X = %d | Y = %d | INSET = %d", BTN_X, BTN_Y, BTN_INSET) })
 TabInfo:Paragraph({ Title = "⌨️ Phím tắt",   Content = "RightShift → Ẩn / Hiện UI" })
-TabInfo:Paragraph({ Title = "⚠️ Lưu ý",      Content = "Auto Farm dùng FireServer trực tiếp, không cần tap tọa độ!" })
+TabInfo:Paragraph({ Title = "⚠️ Lưu ý",      Content = "Dùng X/Y Offset trong Auto Farm để căn chỉnh tọa độ tap." })
 
 -- ============================================
 -- KHỞI ĐỘNG
 -- ============================================
 WindUI:Notify({
     Title    = "🎣 Titan Fishing Loaded",
-    Content  = "Remote Cast[24] Reel[42] đã sẵn sàng!",
+    Content  = string.format("Tap X=%d Y=%d | Tốc độ mặc định 80ms", BTN_X, BTN_Y),
     Icon     = "fish",
     Duration = 5,
 })
