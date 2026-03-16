@@ -291,20 +291,11 @@ TabAutoFarm:Paragraph({ Title = "Current Device", Content = "Mobile" })
 
 -- 👇 TOGGLE MỚI: Chọn phương thức Click thay vì Remote
 TabAutoFarm:Toggle({
-    Title    = "Use Click Method (tap tọa độ)",
-    Flag     = "UseClickMethod",
-    Default  = false,
-    Callback = function(state)
-        useClickMethod = state
-    end,
-})
-
-TabAutoFarm:Toggle({
     Title    = "Enable Auto Farm Mobile",
     Flag     = "AutoFarm",
     Default  = false,
     Callback = function(state)
-        autoFarmOn = state
+        useClickMethod = state
         if state then task.spawn(runAutoFarm) end
     end,
 })
