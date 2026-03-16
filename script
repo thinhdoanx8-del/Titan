@@ -291,7 +291,7 @@ TabAutoFarm:Paragraph({ Title = "Current Device", Content = "Mobile" })
 
 -- 👇 TOGGLE MỚI: Chọn phương thức Click thay vì Remote
 TabAutoFarm:Toggle({
-    Title    = "Use Click Method (tap tọa độ)",
+    Title    = "Enable Auto Farm Mobile",
     Flag     = "UseClickMethod",
     Default  = false,
     Callback = function(state)
@@ -299,15 +299,6 @@ TabAutoFarm:Toggle({
     end,
 })
 
-TabAutoFarm:Toggle({
-    Title    = "Enable Auto Farm Mobile",
-    Flag     = "AutoFarm",
-    Default  = false,
-    Callback = function(state)
-        autoFarmOn = state
-        if state then task.spawn(runAutoFarm) end
-    end,
-})
 
 local offsetLabel = TabAutoFarm:Paragraph({
     Title   = "Current Offset:",
