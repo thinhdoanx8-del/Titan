@@ -1,6 +1,7 @@
 -- ============================================
 --   Titan Fishing - Auto Farm Script
 --   UI: Wind UI Library (Footagesus)
+--   Remote Cast[24] & Reel[42] + Auto Skill + Auto Sell
 -- ============================================
 
 local WindUI = loadstring(game:HttpGet(
@@ -12,25 +13,26 @@ local VIM              = game:GetService("VirtualInputManager")
 local TweenService     = game:GetService("TweenService")
 local LocalPlayer      = Players.LocalPlayer
 
+-- Remote Events
+local events   = game:GetService("ReplicatedStorage").Communication.Events
+local children = events:GetChildren()
+
 local BTN_X     = 694
 local BTN_Y     = 335
 local BTN_INSET = 58
 local offsetX   = 30
 local offsetY   = 0
 
-local autoFarmOn = false
-local castWait   = 0.8
-local reelWait   = 2.0
-local clickSpeed = 0.08
-
-local autoSkillOn  = false
+local autoFarmOn  = false
+local castWait    = 0.8
+local reelWait    = 2.0
+local clickSpeed  = 0.08
+local autoSkillOn = false
 local selectedKeys = {}
-local skillDelay   = 0.3
-local freezeOn     = false
-
-local autoSellOn   = false
-
-local keyMap = { Z = Enum.KeyCode.Z, X = Enum.KeyCode.X, C = Enum.KeyCode.C, V = Enum.KeyCode.V }
+local skillDelay  = 0.3
+local freezeOn    = false
+local autoSellOn  = false
+local sellInterval = 60
 
 -- ============================================
 -- WINDOW
@@ -50,31 +52,45 @@ local Window = WindUI:CreateWindow({
 -- ============================================
 -- TABS
 -- ============================================
-local TabAutoFarm  = Window:Tab({ Title = "Auto Farm",  Name = "Auto Farm",  Icon = "zap"      })
-local TabAutoSkill = Window:Tab({ Title = "Auto Skill", Name = "Auto Skill", Icon = "keyboard" })
+local TabAutoFarm  = Window:Tab({ Title = "Auto Farm",  Name = "Auto Farm",  Icon = "zap"           })
+local TabAutoSkill = Window:Tab({ Title = "Auto Skill", Name = "Auto Skill", Icon = "keyboard"      })
 local TabAutoSell  = Window:Tab({ Title = "Auto Sell",  Name = "Auto Sell",  Icon = "shopping-cart" })
-local TabSettings  = Window:Tab({ Title = "Settings",   Name = "Settings",   Icon = "settings" })
-local TabInfo      = Window:Tab({ Title = "Info",       Name = "Info",       Icon = "info"     })
+local TabSettings  = Window:Tab({ Title = "Settings",   Name = "Settings",   Icon = "settings"      })
+local TabInfo      = Window:Tab({ Title = "Info",       Name = "Info",       Icon = "info"          })
 
 -- ============================================
--- HÀM
+-- HÀM FISHING (REMOTE)
 -- ============================================
-local function tapAt(x, y)
-    pcall(function()
-        VIM:SendMouseButtonEvent(x, y, 0, true, game, 0)
-        task.wait(clickSpeed)
-        VIM:SendMouseButtonEvent(x, y, 0, false, game, 0)
-    end)
+local function castRod()
+    children[24]:FireServer()
 end
 
-local function pressKey(keyCode)
-    pcall(function()
-        VIM:SendKeyEvent(true,  keyCode, false, game)
-        task.wait(0.05)
-        VIM:SendKeyEvent(false, keyCode, false, game)
-    end)
+local function reelRod()
+    children[42]:FireServer()
 end
 
+-- ============================================
+-- HÀM SKILL
+-- ============================================
+local function pressSkill(skillName)
+    for _, obj in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
+        if obj.Name == skillName and obj.Parent.Name == "Skills" then
+            pcall(function() firesignal(obj.MouseButton1Click) end)
+            pcall(function() firesignal(obj.Activated) end)
+            pcall(function() firesignal(obj.TouchTap) end)
+            pcall(function()
+                firesignal(obj.MouseButton1Down, 0, 0)
+                task.wait(0.05)
+                firesignal(obj.MouseButton1Up, 0, 0)
+            end)
+            break
+        end
+    end
+end
+
+-- ============================================
+-- HÀM TIMING PERFECT
+-- ============================================
 local function getTimingFrames()
     local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
     if not playerGui then return nil, nil end
@@ -109,7 +125,7 @@ local function hitPerfect()
     local bar, perfect = waitForMiniGame(5)
     if not bar or not perfect then
         task.wait(0.6)
-        tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+        reelRod()
         return
     end
     local maxWait, elapsed = 10, 0
@@ -119,33 +135,35 @@ local function hitPerfect()
         local perfLeft  = perfect.AbsolutePosition.X
         local perfRight = perfLeft + perfect.AbsoluteSize.X
         if barCenter >= perfLeft and barCenter <= perfRight then
-            tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+            reelRod()
             return
         end
         task.wait(0.016)
         elapsed = elapsed + 0.016
     end
-    tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+    reelRod()
 end
 
 local function runAutoFarm()
     while autoFarmOn do
-        tapAt(BTN_X + offsetX, BTN_Y + offsetY)
+        castRod()
         task.wait(castWait)
         hitPerfect()
         task.wait(reelWait)
     end
 end
 
+-- ============================================
+-- HÀM AUTO SKILL
+-- ============================================
 local function runAutoSkill()
     while autoSkillOn do
         if #selectedKeys == 0 then
             task.wait(0.3)
         else
-            for _, keyName in ipairs(selectedKeys) do
+            for _, skillName in ipairs(selectedKeys) do
                 if not autoSkillOn then break end
-                local kc = keyMap[keyName]
-                if kc then pressKey(kc) end
+                pressSkill(skillName)
                 task.wait(skillDelay)
             end
         end
@@ -158,14 +176,11 @@ end
 local function doSell()
     local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
     local root = char:WaitForChild("HumanoidRootPart")
-
-    -- Lưu vị trí hiện tại
     local savedPos = root.CFrame
 
-    -- Tìm NPC bluewaterrobux gần nhất
-    local nearestNPC = nil
+    local nearestNPC  = nil
     local nearestDist = math.huge
-    local nearestPP = nil
+    local nearestPP   = nil
 
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj.Name == "bluewaterrobux" and obj:IsA("Model") then
@@ -174,7 +189,7 @@ local function doSell()
                 local dist = (part.Position - root.Position).Magnitude
                 if dist < nearestDist then
                     nearestDist = dist
-                    nearestNPC = part
+                    nearestNPC  = part
                 end
             end
         end
@@ -182,7 +197,6 @@ local function doSell()
 
     if not nearestNPC then return end
 
-    -- Tìm PP Interact gần NPC
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("ProximityPrompt") and obj.ActionText == "Interact" then
             local part = obj.Parent
@@ -196,23 +210,17 @@ local function doSell()
         end
     end
 
-    -- Bước 1: Tween đến NPC
-    local targetCFrame = CFrame.new(nearestNPC.Position + Vector3.new(0, 0, 4))
     root.Anchored = true
     local tween = TweenService:Create(root, TweenInfo.new(
         2, Enum.EasingStyle.Linear, Enum.EasingDirection.Out
-    ), { CFrame = targetCFrame })
+    ), { CFrame = CFrame.new(nearestNPC.Position + Vector3.new(0, 0, 4)) })
     tween:Play()
     tween.Completed:Wait()
     root.Anchored = false
     task.wait(0.5)
 
-    -- Bước 2: Fire PP mở menu
-    if nearestPP then
-        fireproximityprompt(nearestPP)
-    end
+    if nearestPP then fireproximityprompt(nearestPP) end
 
-    -- Bước 3: Sell All (giữ nguyên code gốc)
     task.wait(1)
     for _, obj in ipairs(LocalPlayer.PlayerGui:GetDescendants()) do
         if obj:IsA("TextLabel") and string.lower(obj.Text):find("sell all") then
@@ -228,8 +236,6 @@ local function doSell()
     end
 
     task.wait(1)
-
-    -- Bước 4: Tween về vị trí cũ
     root.Anchored = true
     local tweenBack = TweenService:Create(root, TweenInfo.new(
         2, Enum.EasingStyle.Linear, Enum.EasingDirection.Out
@@ -239,10 +245,10 @@ local function doSell()
     root.Anchored = false
 end
 
-local function runAutoSell(interval)
+local function runAutoSell()
     while autoSellOn do
         doSell()
-        task.wait(interval)
+        task.wait(sellInterval)
     end
 end
 
@@ -261,44 +267,13 @@ TabAutoFarm:Toggle({
     end,
 })
 
-local offsetLabel = TabAutoFarm:Paragraph({
-    Title   = "Current Offset:",
-    Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY),
-})
-
-TabAutoFarm:Input({
-    Title       = "X Axis Offset",
-    Flag        = "XOffset",
-    Placeholder = "Ex: 40",
-    Callback    = function(val)
-        local num = tonumber(val)
-        if num then
-            offsetX = num
-            offsetLabel:Set({ Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY) })
-        end
-    end,
-})
-
-TabAutoFarm:Input({
-    Title       = "Y Axis Offset",
-    Flag        = "YOffset",
-    Placeholder = "Ex: 0",
-    Callback    = function(val)
-        local num = tonumber(val)
-        if num then
-            offsetY = num
-            offsetLabel:Set({ Content = string.format("X Axis: %d | Y Axis: %d", offsetX, offsetY) })
-        end
-    end,
-})
-
 -- ============================================
 -- TAB AUTO SKILL
 -- ============================================
 TabAutoSkill:Dropdown({
     Title    = "Skill Keys Mobile",
     Flag     = "SkillKeys",
-    Values   = { "Z", "X", "C", "V" },
+    Values   = { "Skill1", "Skill2", "Skill3", "Skill4" },
     Default  = {},
     Multi    = true,
     Callback = function(selected)
@@ -346,19 +321,13 @@ TabAutoSkill:Toggle({
 -- ============================================
 TabAutoSell:Paragraph({ Title = "Auto Sell", Content = "Tự động tween đến NPC và bán cá" })
 
-local sellInterval = 60
-
 TabAutoSell:Toggle({
     Title    = "Enable Auto Sell",
     Flag     = "AutoSell",
     Default  = false,
     Callback = function(state)
         autoSellOn = state
-        if state then
-            task.spawn(function()
-                runAutoSell(sellInterval)
-            end)
-        end
+        if state then task.spawn(runAutoSell) end
     end,
 })
 
@@ -376,33 +345,30 @@ TabAutoSell:Slider({
     Max      = 300,
     Default  = 60,
     Decimals = 0,
-    Callback = function(v)
-        sellInterval = v
-    end,
+    Callback = function(v) sellInterval = v end,
 })
 
 -- ============================================
 -- TAB SETTINGS
 -- ============================================
-TabSettings:Slider({ Title = "Chờ sau tap lần 1 (giây)",   Flag = "CastWait",   Min = 0.3,  Max = 3,   Default = 0.8, Decimals = 1, Callback = function(v) castWait   = v       end })
+TabSettings:Slider({ Title = "Chờ sau cast (giây)",        Flag = "CastWait",   Min = 0.3,  Max = 3,   Default = 0.8, Decimals = 1, Callback = function(v) castWait   = v       end })
 TabSettings:Slider({ Title = "Chờ sau khi thả cần (giây)", Flag = "ReelWait",   Min = 0.5,  Max = 6,   Default = 2.0, Decimals = 1, Callback = function(v) reelWait   = v       end })
-TabSettings:Slider({ Title = "Tốc độ click (ms)",           Flag = "ClickSpeed", Min = 10,   Max = 300, Default = 80,  Decimals = 0, Callback = function(v) clickSpeed = v / 1000 end })
 TabSettings:Slider({ Title = "Delay Auto Skill (giây)",     Flag = "SkillDelay", Min = 0.05, Max = 2.0, Default = 0.3, Decimals = 2, Callback = function(v) skillDelay = v       end })
 
 -- ============================================
 -- TAB INFO
 -- ============================================
-TabInfo:Paragraph({ Title = "📖 Cách dùng",  Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật Enable Auto Farm Mobile\n4. Script tự động tap và canh Perfect!" })
-TabInfo:Paragraph({ Title = "⚙️ Tọa độ gốc", Content = string.format("BTN_X = %d | BTN_Y = %d | INSET = %d", BTN_X, BTN_Y, BTN_INSET) })
+TabInfo:Paragraph({ Title = "📖 Cách dùng",  Content = "1. Vào game Titan Fishing\n2. Đứng gần điểm câu cá\n3. Bật Enable Auto Farm Mobile\n4. Script tự động cast và canh Perfect!" })
+TabInfo:Paragraph({ Title = "⚙️ Remote",      Content = "Cast: Events[24] | Reel: Events[42]" })
 TabInfo:Paragraph({ Title = "⌨️ Phím tắt",   Content = "RightShift → Ẩn / Hiện UI" })
-TabInfo:Paragraph({ Title = "⚠️ Lưu ý",      Content = "Dùng X/Y Axis Offset để căn chỉnh tọa độ tap." })
+TabInfo:Paragraph({ Title = "⚠️ Lưu ý",      Content = "Auto Farm dùng FireServer trực tiếp, không cần tap tọa độ!" })
 
 -- ============================================
 -- KHỞI ĐỘNG
 -- ============================================
 WindUI:Notify({
     Title    = "🎣 Titan Fishing Loaded",
-    Content  = string.format("X=%d Y=%d | Offset X=%d Y=%d", BTN_X, BTN_Y, offsetX, offsetY),
+    Content  = "Remote Cast[24] Reel[42] đã sẵn sàng!",
     Icon     = "fish",
     Duration = 5,
 })
