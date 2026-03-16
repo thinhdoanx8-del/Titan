@@ -264,7 +264,7 @@ TabAutoFarm:Input({
 TabAutoSkill:Dropdown({
     Title    = "Skill Keys Mobile",
     Flag     = "SkillKeys",
-    Values   = { "Skill1", "Skill2", "Skill3", "Skill4" },
+    Values   = { "Z", "X", "C", "V" },
     Default  = {},
     Multi    = true,
     Callback = function(selected)
